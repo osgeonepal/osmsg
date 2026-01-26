@@ -1,7 +1,6 @@
 [project]
 name = "osmsg"
 version = "0.3.0"
-dynamic = ["version"]
 description = "OpenStreetMap Stats Generator: Commandline"
 readme = "README.md"
 authors = [
@@ -52,17 +51,25 @@ docs = [
 ]
 
 [project.scripts]
-osmsg = "osmsg.app:main"  
+osmsg = "osmsg.app:main"
 
 [build-system]
-requires = ["pdm-pep517>=1.1.4"]
-build-backend = "pdm.pep517.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "commitizen",
+    "pre-commit",
+]
+
+ui = [
+    "streamlit>=1.44.1",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra -q -p no:warnings"
-testpaths = [
-    "tests",
-]
+testpaths = ["tests"]
 pythonpath = "osmsg"
 
 [tool.commitizen]
@@ -75,13 +82,6 @@ version_files = [
     "pyproject.toml:version",
     "osmsg/__version__.py",
 ]
-
-[tool.pdm]
-version = {from = "osmsg/__version__.py"}
-
-[tool.pdm.build]
-includes = ["osmsg"]
-source-includes = ["tests", "LICENSE", "README.md"]
 
 [tool.black]
 line-length = 132
