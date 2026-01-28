@@ -85,12 +85,12 @@ version_files = [
 
 [tool.black]
 line-length = 132
-target-versions = ["py39", "py310", "py311"]
+target-versions = ["py39", "py310", "py311", "py312"]
 
 [tool.ruff]
 fix = true
 line-length = 132
-target-version = "py39"
+target-version = "py312"
 exclude = [
     ".git",
     ".ruff_cache",
