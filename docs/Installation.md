@@ -38,25 +38,14 @@ docker run -it -v /home/user/data:/app/data osmsg
 
 ### Development Setup
 
-**Packages needed if you use Debian based Linux distros**
-Run the following in the terminal:
+#### How to Install
+
+1. Install system dependencies.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y \
-    build-essential \
-    cmake \
-    libproj-dev \
-    proj-bin \
-    libgeos-dev \
-    libboost-dev \
-    libboost-system-dev \
-    libboost-filesystem-dev \
-    python3-dev \
-    clang
+sudo apt-get install -y osmium-tool
 ```
-
-#### How to Install
 
 1. Fork the repo <https://github.com/osgeonepal/OSMSG>
 
