@@ -56,6 +56,15 @@ from .changefiles import (
 )
 from .changesets import ChangesetToolKit
 from .login import verify_me_osm
+from .models import (
+    ChangesetMeta,
+    POIActionCounts,
+    SummaryInterval,
+    SummaryIntervalTemp,
+    UserRecord,
+    UsersTemp,
+)
+from .output import summary_export_dict, users_export_dict
 from .utils import (
     create_charts,
     create_profile_link,
@@ -71,13 +80,13 @@ from .utils import (
     update_summary,
 )
 
-users_temp = {}
-users = {}
-summary_interval = {}
-summary_interval_temp = {}
-processed_changesets = {}
+users_temp: dict[int, UsersTemp] = {}
+users: dict[int, UserRecord] = {}
+summary_interval: dict[str, SummaryInterval] = {}
+summary_interval_temp: dict[str, SummaryIntervalTemp] = {}
+processed_changesets: dict[int, ChangesetMeta] = {}
 countries_changesets = {}
-whitelisted_users = []
+whitelisted_users: list[str] = []
 
 field_mapping_editors = [
     "streetcomplete",
@@ -98,17 +107,11 @@ def Initialize():
 
     print("Initializing ....")
     # read the GeoJSON file
-    countries_df = gpd.read_file(
-        "https://raw.githubusercontent.com/osgeonepal/OSMSG/master/data/countries_un.geojson"
-    )
-    geofabrik_countries = pd.read_csv(
-        "https://raw.githubusercontent.com/osgeonepal/OSMSG/master/data/countries.csv"
-    )
+    countries_df = gpd.read_file("https://raw.githubusercontent.com/osgeonepal/OSMSG/master/data/countries_un.geojson")
+    geofabrik_countries = pd.read_csv("https://raw.githubusercontent.com/osgeonepal/OSMSG/master/data/countries.csv")
 
 
-def collect_changefile_stats(
-    user, uname, changeset, version, tags, osm_type, timestamp, osm_obj_nodes=None
-):
+def collect_changefile_stats(user, uname, changeset, version, tags, osm_type, timestamp, osm_obj_nodes=None):
     tags_to_collect = list(additional_tags) if additional_tags else None
     if version == 1:
         action = "create"
@@ -125,156 +128,110 @@ def collect_changefile_stats(
             # print("WARNING: way  incomplete." % w.id)
             pass
 
-    # set default
-    users.setdefault(
-        user,
-        {
-            "name": uname,
-            "uid": user,
-            "changesets": 0,
-            "nodes": {"create": 0, "modify": 0, "delete": 0},
-            "ways": {"create": 0, "modify": 0, "delete": 0},
-            "relations": {"create": 0, "modify": 0, "delete": 0},
-            "poi": {"create": 0, "modify": 0},  # nodes that has tags
-        },
-    )
+    if user not in users:
+        users[user] = UserRecord(name=uname, uid=user)
 
     # changeset count
-    users_temp.setdefault(user, {"changesets": []})
+    if user not in users_temp:
+        users_temp[user] = UsersTemp()
     if summary:
-        summary_interval.setdefault(
-            timestamp,
-            {
-                "timestamp": timestamp,
-                "users": 0,
-                "changesets": 0,
-                "nodes": {"create": 0, "modify": 0, "delete": 0},
-                "ways": {"create": 0, "modify": 0, "delete": 0},
-                "relations": {"create": 0, "modify": 0, "delete": 0},
-                "poi": {"create": 0, "modify": 0},
-            },
-        )
-        summary_interval_temp.setdefault(timestamp, {"changesets": [], "users": []})
-        if changeset not in summary_interval_temp[timestamp]["changesets"]:
-            summary_interval_temp[timestamp]["changesets"].append(changeset)
-        summary_interval[timestamp]["changesets"] = len(
-            summary_interval_temp[timestamp]["changesets"]
-        )
-        if user not in summary_interval_temp[timestamp]["users"]:
-            summary_interval_temp[timestamp]["users"].append(user)
-        summary_interval[timestamp]["users"] = len(
-            summary_interval_temp[timestamp]["users"]
-        )
-    users_temp[user].setdefault("changesets", [])
-    if changeset not in users_temp[user]["changesets"]:
-        users_temp[user]["changesets"].append(changeset)
-    users[user]["changesets"] = len(users_temp[user]["changesets"])
+        if timestamp not in summary_interval:
+            summary_interval[timestamp] = SummaryInterval(timestamp=timestamp)
+        if timestamp not in summary_interval_temp:
+            summary_interval_temp[timestamp] = SummaryIntervalTemp()
+        if changeset not in summary_interval_temp[timestamp].changesets:
+            summary_interval_temp[timestamp].changesets.append(changeset)
+        summary_interval[timestamp].changesets = len(summary_interval_temp[timestamp].changesets)
+        if user not in summary_interval_temp[timestamp].users:
+            summary_interval_temp[timestamp].users.append(user)
+        summary_interval[timestamp].users = len(summary_interval_temp[timestamp].users)
+    if changeset not in users_temp[user].changesets:
+        users_temp[user].changesets.append(changeset)
+    users[user].changesets = len(users_temp[user].changesets)
 
     # hashtags & countries block
     if hashtags or changeset_meta:
-        users[user].setdefault("countries", [])
-        users[user].setdefault("hashtags", [])
-        users[user].setdefault("editors", [])
-        if summary:
-            summary_interval[timestamp].setdefault("editors", {})
-
         if changeset in processed_changesets:
             try:
-                users[user]["countries"] += [
-                    ctry
-                    for ctry in processed_changesets[changeset]["countries"]
-                    if ctry not in users[user]["countries"]
+                users[user].countries += [
+                    ctry for ctry in processed_changesets[changeset].countries if ctry not in users[user].countries
                 ]
-                users[user]["hashtags"] += [
-                    hstg
-                    for hstg in processed_changesets[changeset]["hashtags"]
-                    if hstg not in users[user]["hashtags"]
+                users[user].hashtags += [
+                    hstg for hstg in processed_changesets[changeset].hashtags if hstg not in users[user].hashtags
                 ]
-                for editor in processed_changesets[changeset]["editors"]:
-                    if editor not in users[user]["editors"]:
-                        users[user]["editors"].append(editor)
+                for editor in processed_changesets[changeset].editors:
+                    if editor not in users[user].editors:
+                        users[user].editors.append(editor)
                     if summary:
                         try:
                             editor = get_editors_name_strapped(editor)
-                            summary_interval[timestamp]["editors"].setdefault(editor, 0)
-                            summary_interval[timestamp]["editors"][editor] += 1
+                            summary_interval[timestamp].editors[editor] = summary_interval[timestamp].editors.get(editor, 0) + 1
                         except:
                             pass
             except:
                 pass
 
     # osm element count
-    users[user][osm_type][action] += 1
+    getattr(users[user], osm_type).increment(action)
     if summary:
-        summary_interval[timestamp][osm_type][action] += 1
+        getattr(summary_interval[timestamp], osm_type).increment(action)
 
     # POI block
     if osm_type == "nodes" and tags and action != "delete":
-        users[user]["poi"][action] += 1
+        users[user].poi.increment(action)
         if summary:
-            summary_interval[timestamp]["poi"][action] += 1
+            # summary_interval[timestamp]["poi"][action] += 1
+            summary_interval[timestamp].poi.increment(action)
 
     # all tags block
     if all_tags:
-        users[user].setdefault("tags_create", {})
-        users[user].setdefault("tags_modify", {})
-        if summary:
-            summary_interval[timestamp].setdefault("tags_create", {})
-            summary_interval[timestamp].setdefault("tags_modify", {})
         if tags:
             for key, value in tags:
                 if action != "delete":  # we don't need deleted tags
+                    tags_dict = users[user].tags_create if action == "create" else users[user].tags_modify
                     if key_value:
-                        users[user][f"tags_{action}"].setdefault(f"{key}={value}", 0)
-                        users[user][f"tags_{action}"][f"{key}={value}"] += 1
-                    users[user][f"tags_{action}"].setdefault(key, 0)
-                    users[user][f"tags_{action}"][key] += 1
+                        tags_dict[f"{key}={value}"] = tags_dict.get(f"{key}={value}", 0) + 1
+                    tags_dict[key] = tags_dict.get(key, 0) + 1
                     if summary:
+                        tags_dict = (
+                            summary_interval[timestamp].tags_create
+                            if action == "create"
+                            else summary_interval[timestamp].tags_modify
+                        )
                         if key_value:
-                            summary_interval[timestamp][f"tags_{action}"].setdefault(
-                                f"{key}={value}", 0
-                            )
-                            summary_interval[timestamp][f"tags_{action}"][
-                                f"{key}={value}"
-                            ] += 1
-                        summary_interval[timestamp][f"tags_{action}"].setdefault(key, 0)
-                        summary_interval[timestamp][f"tags_{action}"][key] += 1
+                            tags_dict[f"{key}={value}"] = tags_dict.get(f"{key}={value}", 0) + 1
+                        tags_dict[key] = tags_dict.get(key, 0) + 1
 
     # for user supplied tags
     if tags_to_collect and action != "delete" and tags:
         for tag in tags_to_collect:
             if summary:
-                summary_interval[timestamp].setdefault(tag, {"create": 0, "modify": 0})
-            users[user].setdefault(tag, {"create": 0, "modify": 0})
+                if tag not in summary_interval[timestamp].additional_tag_stats:
+                    summary_interval[timestamp].additional_tag_stats[tag] = POIActionCounts()
+            if tag not in users[user].additional_tag_stats:
+                users[user].additional_tag_stats[tag] = POIActionCounts()
             if tag in tags:
                 if summary:
-                    summary_interval[timestamp][tag][action] += 1
-                users[user][tag][action] += 1
+                    summary_interval["timestamp"].additional_tag_stats[tag].increment(action)
+                users[user].additional_tag_stats[tag].increment(action)
 
     # for length calculation
     if length:
         for t in length:
-            users[user].setdefault(f"{t}_len_m", 0)
+            if t not in users[user].lengths:
+                users[user].lengths[t] = 0.0
             if summary:
-                summary_interval[timestamp].setdefault(f"{t}_len_m", 0)
+                if t not in summary_interval[timestamp].lengths:
+                    summary_interval[timestamp].lengths[t] = 0.0
             if tags:
-                if (
-                    t in tags
-                    and action != "modify"
-                    and action != "delete"
-                    and len_feature > 0
-                ):
+                if t in tags and action != "modify" and action != "delete" and len_feature > 0:
                     if summary:
-                        summary_interval[timestamp][f"{t}_len_m"] += round(len_feature)
-                    users[user][f"{t}_len_m"] += round(len_feature)
+                        summary_interval[timestamp].lengths[t] += round(len_feature)
+                    users[user].lengths[t] += round(len_feature)
 
 
-def calculate_stats(
-    user, uname, changeset, version, tags, osm_type, timestamp, osm_obj_nodes=None
-):
-    if (
-        hashtags or collect_field_mappers_stats or geom_boundary
-    ):  # intersect with changesets
+def calculate_stats(user, uname, changeset, version, tags, osm_type, timestamp, osm_obj_nodes=None):
+    if hashtags or collect_field_mappers_stats or geom_boundary:  # intersect with changesets
         if (
             len(processed_changesets) > 0
         ):  # make sure there are changesets to intersect if not meaning hashtag changeset not found no need to go for changefiles
@@ -339,43 +296,37 @@ class ChangesetHandler(osmium.SimpleHandler):
             if "comment" in c.tags:
                 if exact_lookup:
                     hashtags_comment = re.findall(r"#[\w-]+", c.tags["comment"])
-                    if any(
-                        elem.lower() in map(str.lower, hashtags_comment)
-                        for elem in hashtags
-                    ):
+                    if any(elem.lower() in map(str.lower, hashtags_comment) for elem in hashtags):
                         run_hashtag_check_logic = True
-                elif any(
-                    elem.lower() in c.tags["comment"].lower() for elem in hashtags
-                ):
+                elif any(elem.lower() in c.tags["comment"].lower() for elem in hashtags):
                     run_hashtag_check_logic = True
         if run_hashtag_check_logic and len(whitelisted_users) > 0:
             run_hashtag_check_logic = c.user in whitelisted_users
 
         if run_hashtag_check_logic or collect_field_mappers_stats:
-            processed_changesets.setdefault(
-                c.id,
-                {
-                    "hashtags": [],
-                    "countries": [],
-                    "editors": [],
-                },
-            )
-            if (
-                "created_by" in c.tags
-                and c.tags["created_by"] not in processed_changesets[c.id]["editors"]
-            ):
-                processed_changesets[c.id]["editors"].append(c.tags["created_by"])
+            # processed_changesets.setdefault(
+            #     c.id,
+            #     {
+            #         "hashtags": [],
+            #         "countries": [],
+            #         "editors": [],
+            #     },
+            # )
+            if c.id not in processed_changesets:
+                processed_changesets[c.id] = ChangesetMeta()
+            if "created_by" in c.tags and c.tags["created_by"] not in processed_changesets[c.id].editors:
+                processed_changesets[c.id].editors.append(c.tags["created_by"])
             if "comment" in c.tags:
                 hashtags_comment = re.findall(r"#[\w-]+", c.tags["comment"])
                 for hash_tag in hashtags_comment:
-                    if hash_tag not in processed_changesets[c.id]["hashtags"]:
-                        processed_changesets[c.id]["hashtags"].append(hash_tag)
+                    if hash_tag not in processed_changesets[c.id].hashtags:
+                        processed_changesets[c.id].hashtags.append(hash_tag)
 
             if centroid:
                 intersected_rows = countries_df[countries_df.intersects(centroid)]
                 for i, row in intersected_rows.iterrows():
-                    if row["name"] not in processed_changesets[c.id]["countries"]:
-                        processed_changesets[c.id]["countries"].append(row["name"])
+                    if row["name"] not in processed_changesets[c.id].countries:
+                        processed_changesets[c.id].countries.append(row["name"])
 
 
 class ChangefileHandler(osmium.SimpleHandler):
@@ -388,9 +339,7 @@ class ChangefileHandler(osmium.SimpleHandler):
             if n.deleted:
                 version = 0
 
-            calculate_stats(
-                n.uid, n.user, n.changeset, version, n.tags, "nodes", n.timestamp
-            )
+            calculate_stats(n.uid, n.user, n.changeset, version, n.tags, "nodes", n.timestamp)
 
     def way(self, w):
         if w.timestamp >= start_date_utc and w.timestamp < end_date_utc:
@@ -463,7 +412,7 @@ def auth(username, password):
     print("Authenticating...")
     try:
         cookies = verify_me_osm(username, password)
-    except Exception as ex:
+    except Exception:
         raise ValueError("OSM Authentication Failed")
 
     print("Authenticated !")
@@ -472,9 +421,7 @@ def auth(username, password):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--start_date",
         help="Start date in the format YYYY-MM-DD HH:M:Sz eg: 2023-01-28 17:43:09+05:45",
@@ -708,9 +655,7 @@ def main():
     args = parse_args()
     Initialize()
     fname = args.name
-    full_path = os.path.abspath(
-        os.path.join(os.getcwd(), os.path.join(os.getcwd(), f"{fname}.csv"))
-    )
+    full_path = os.path.abspath(os.path.join(os.getcwd(), os.path.join(os.getcwd(), f"{fname}.csv")))
     base_path = os.path.abspath(os.path.dirname(full_path))
     print(base_path)
     if not os.path.exists(base_path):
@@ -725,18 +670,9 @@ def main():
             print("Error : Option not allowed : read_from_metadata along with --update")
             sys.exit()
         if args.start_date:
-            print(
-                "Error : Start_date is not allowed during update it will read it from stats csv"
-            )
+            print("Error : Start_date is not allowed during update it will read it from stats csv")
             sys.exit()
-        if (
-            args.last_week
-            or args.last_day
-            or args.last_month
-            or args.last_year
-            or args.last_hour
-            or args.days
-        ):
+        if args.last_week or args.last_day or args.last_month or args.last_year or args.last_hour or args.days:
             print(
                 "Error : Can't pass last_* parameters along with update , update will pick start date from old csv and try to update up to now / end_date"
             )
@@ -755,22 +691,11 @@ def main():
             old_stats_start_date = str(old_df.iloc[0]["start_date"])
 
     if args.start_date:
-        start_date = strip_utc(
-            dt.datetime.strptime(args.start_date, "%Y-%m-%d %H:%M:%S%z"), args.timezone
-        )
+        start_date = strip_utc(dt.datetime.strptime(args.start_date, "%Y-%m-%d %H:%M:%S%z"), args.timezone)
 
     if not args.start_date:
-        if not (
-            args.last_week
-            or args.last_day
-            or args.last_month
-            or args.last_year
-            or args.last_hour
-            or args.days
-        ):
-            print(
-                "ERR: Supply start_date or extraction parameters such as last_day , last_hour"
-            )
+        if not (args.last_week or args.last_day or args.last_month or args.last_year or args.last_hour or args.days):
+            print("ERR: Supply start_date or extraction parameters such as last_day , last_hour")
             sys.exit()
 
     if args.end_date:
@@ -783,15 +708,9 @@ def main():
         osc_url_temp = []
         for ctr in args.country:
             if not geofabrik_countries["id"].isin([ctr.lower()]).any():
-                print(
-                    f"Error : {ctr} doesn't exists : Refer to data/countries.csv id column"
-                )
+                print(f"Error : {ctr} doesn't exists : Refer to data/countries.csv id column")
                 sys.exit()
-            osc_url_temp.append(
-                geofabrik_countries.loc[
-                    geofabrik_countries["id"] == ctr.lower(), "update_url"
-                ].values[0]
-            )
+            osc_url_temp.append(geofabrik_countries.loc[geofabrik_countries["id"] == ctr.lower(), "update_url"].values[0])
         print(f"Ignoring --url , and using Geofabrik Update URL for {args.country}")
         args.url = osc_url_temp
 
@@ -801,9 +720,7 @@ def main():
 
     if args.changeset:
         if args.hashtags:
-            assert (
-                args.changeset
-            ), "You can not use include changeset meta option along with hashtags"
+            assert args.changeset, "You can not use include changeset meta option along with hashtags"
 
     start_time = time.time()
 
@@ -869,9 +786,7 @@ def main():
                 args.password = os.environ.get("OSM_PASSWORD")
 
             if not (args.username and args.password):
-                assert (
-                    args.username and args.password
-                ), "OSM username and password are required for geofabrik url"
+                assert args.username and args.password, "OSM username and password are required for geofabrik url"
             cookies = auth(args.username, args.password)
 
     count = sum(
@@ -885,9 +800,7 @@ def main():
         ]
     )
     if count > 1:
-        print(
-            "Error: only one of --last_hour, --last_year, --last_month, --last_day, --last_week, or --days should be specified."
-        )
+        print("Error: only one of --last_hour, --last_year, --last_month, --last_day, --last_week, or --days should be specified.")
         sys.exit()
 
     if args.users:
@@ -920,9 +833,7 @@ def main():
                 # Reading from json file
                 meta_json = json.load(openfile)
             if "end_date" in meta_json:
-                start_date = datetime.strptime(
-                    meta_json["end_date"], "%Y-%m-%d %H:%M:%S%z"
-                )
+                start_date = datetime.strptime(meta_json["end_date"], "%Y-%m-%d %H:%M:%S%z")
 
                 print(f"Start date changed to {start_date} after reading from metajson")
             else:
@@ -968,9 +879,7 @@ def main():
 
         max_workers = os.cpu_count() if not args.workers else args.workers
         print(f"Using {max_workers} Threads")
-        print(
-            "Downloading Changeset files using https://planet.openstreetmap.org/replication/changesets/"
-        )
+        print("Downloading Changeset files using https://planet.openstreetmap.org/replication/changesets/")
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             try:
                 with tqdm(
@@ -980,9 +889,7 @@ def main():
                     leave=True,
                 ) as pbar:
                     for _ in executor.map(
-                        lambda x: download_osm_files(
-                            x, mode="changeset", cookies=cookies
-                        ),
+                        lambda x: download_osm_files(x, mode="changeset", cookies=cookies),
                         changeset_download_urls,
                     ):
                         pbar.update(1)
@@ -1026,9 +933,7 @@ def main():
             end_seq_url,
         ) = get_download_urls_changefiles(start_date, end_date, url, args.timezone)
         if server_ts < end_date:
-            print(
-                f"Warning : End date data is not available at server, Changing to latest available date {server_ts}"
-            )
+            print(f"Warning : End date data is not available at server, Changing to latest available date {server_ts}")
             end_date = server_ts
             if start_date >= server_ts:
                 print("Err: Data is not available after start date ")
@@ -1038,9 +943,7 @@ def main():
 
         start_date_utc = start_date.astimezone(dt.timezone.utc)
         end_date_utc = end_date.astimezone(dt.timezone.utc)
-        print(
-            f"Final UTC Date time to filter stats : {start_date_utc} to {end_date_utc}"
-        )
+        print(f"Final UTC Date time to filter stats : {start_date_utc} to {end_date_utc}")
         # Use the ThreadPoolExecutor to download the images in parallel
         max_workers = os.cpu_count() if not args.workers else args.workers
         print(f"Using {max_workers} Threads")
@@ -1055,9 +958,7 @@ def main():
                     leave=True,
                 ) as pbar:
                     for _ in executor.map(
-                        lambda x: download_osm_files(
-                            x, mode="changefiles", cookies=cookies
-                        ),
+                        lambda x: download_osm_files(x, mode="changefiles", cookies=cookies),
                         download_urls,
                     ):
                         pbar.update(1)
@@ -1088,34 +989,7 @@ def main():
         shutil.rmtree("temp")
     if len(users) >= 1:
         # print(users)
-        if args.all_tags:
-            for user in users:
-                for action in ["create", "modify"]:
-                    users[user][f"tags_{action}"] = json.dumps(
-                        dict(
-                            sorted(
-                                users[user][f"tags_{action}"].items(),
-                                key=lambda item: item[1],
-                                reverse=True,
-                            )
-                        )
-                    )
-            if summary:
-                for timestamp in summary_interval:
-                    for action in ["create", "modify"]:
-                        summary_interval[timestamp][f"tags_{action}"] = json.dumps(
-                            dict(
-                                sorted(
-                                    summary_interval[timestamp][
-                                        f"tags_{action}"
-                                    ].items(),
-                                    key=lambda item: item[1],
-                                    reverse=True,
-                                )
-                            )
-                        )
-
-        df = pd.json_normalize(list(users.values()))
+        df = pd.DataFrame([users_export_dict(record) for record in users.values()])
 
         df = df.assign(
             changes=df["nodes.create"]
@@ -1154,17 +1028,6 @@ def main():
             df["hashtags"] = df["hashtags"].apply(lambda x: ",".join(map(str, x)))
             column_to_move = "hashtags"
             df = df.assign(**{column_to_move: df.pop(column_to_move)})
-            if args.summary:
-                for timestamp in summary_interval:
-                    summary_interval[timestamp]["editors"] = json.dumps(
-                        dict(
-                            sorted(
-                                summary_interval[timestamp]["editors"].items(),
-                                key=lambda item: item[1],
-                                reverse=True,
-                            )
-                        )
-                    )
 
         if args.tm_stats:
             print("Generating TM Stats ....")
@@ -1181,13 +1044,7 @@ def main():
             df1 = df
 
             df1["tm_projects"] = df1["hashtags"].apply(extract_projects)
-            unique_projects = list(
-                set(
-                    project
-                    for project_list in df1["tm_projects"]
-                    for project in project_list
-                )
-            )
+            unique_projects = list(set(project for project_list in df1["tm_projects"] for project in project_list))
             usernames_unique = df1["name"].unique().tolist()
 
             df2 = generate_tm_stats(unique_projects, usernames_unique)
@@ -1217,7 +1074,7 @@ def main():
                 print(df)
 
         if args.summary:
-            summary_df = pd.json_normalize(list(summary_interval.values()))
+            summary_df = pd.DataFrame([summary_export_dict(record) for record in summary_interval.values()])
             summary_df = summary_df.assign(
                 changes=summary_df["nodes.create"]
                 + summary_df["nodes.modify"]
@@ -1248,15 +1105,9 @@ def main():
             # Convert the DataFrame to an image
             df_img = df.head(25)
             # Compute sums of specified columns for the top 20 rows
-            created = df_img[["nodes.create", "ways.create", "relations.create"]].sum(
-                axis=1
-            )
-            modified = df_img[["nodes.modify", "ways.modify", "relations.modify"]].sum(
-                axis=1
-            )
-            deleted = df_img[["nodes.delete", "ways.delete", "relations.delete"]].sum(
-                axis=1
-            )
+            created = df_img[["nodes.create", "ways.create", "relations.create"]].sum(axis=1)
+            modified = df_img[["nodes.modify", "ways.modify", "relations.modify"]].sum(axis=1)
+            deleted = df_img[["nodes.delete", "ways.delete", "relations.delete"]].sum(axis=1)
             # Concatenate original DataFrame and sums DataFrame
             result_df = pd.concat(
                 [
@@ -1307,9 +1158,7 @@ def main():
         if "csv" in args.format:
             # Add the start_date and end_date columns to the DataFrame
             csv_df = df
-            csv_df["start_date"] = (
-                old_stats_start_date if args.update else start_date_utc
-            )
+            csv_df["start_date"] = old_stats_start_date if args.update else start_date_utc
             csv_df["end_date"] = end_date_utc
 
             # Create profile link column
@@ -1324,9 +1173,7 @@ def main():
         if "text" in args.format:
             text_output = df.to_markdown(tablefmt="grid", index=False)
             with open(f"{fname}.txt", "w", encoding="utf-8") as file:
-                file.write(
-                    f"User Contributions From {start_date} to {end_date} . Planet Source File : {args.url}\n "
-                )
+                file.write(f"User Contributions From {start_date} to {end_date} . Planet Source File : {args.url}\n ")
                 file.write(text_output)
         produced_charts_list = []
         if args.charts:
@@ -1336,15 +1183,9 @@ def main():
 
         if args.summary:
             summary_df.to_csv(f"{fname}_summary.csv", index=False)
-            created_sum = (
-                df["nodes.create"] + df["ways.create"] + df["relations.create"]
-            )
-            modified_sum = (
-                df["nodes.modify"] + df["ways.modify"] + df["relations.modify"]
-            )
-            deleted_sum = (
-                df["nodes.delete"] + df["ways.delete"] + df["relations.delete"]
-            )
+            created_sum = df["nodes.create"] + df["ways.create"] + df["relations.create"]
+            modified_sum = df["nodes.modify"] + df["ways.modify"] + df["relations.modify"]
+            deleted_sum = df["nodes.delete"] + df["ways.delete"] + df["relations.delete"]
 
             # Get the attribute of first row
             summary_text = f"{humanize.intword(len(df))} Users made {humanize.intword(df['changesets'].sum())} changesets with {humanize.intword(df['map_changes'].sum())} map changes."
@@ -1357,9 +1198,7 @@ def main():
                 file.write(f"#### {summary_text}\n")
                 file.write(f"#### {thread_summary}\n")
                 file.write(f"Get Full Stats at [stats.csv](/{fname}.csv)\n")
-                file.write(
-                    f" & Get Summary Stats at [stats_summary.csv](/{fname}_summary.csv)\n"
-                )
+                file.write(f" & Get Summary Stats at [stats_summary.csv](/{fname}_summary.csv)\n")
                 top_users = "\nTop 5 Users are : \n"
                 # set rank column as index
                 df.set_index("rank", inplace=True)
@@ -1397,7 +1236,9 @@ def main():
                         user_tags_summary += f"- {user_tag} = Created: {humanize.intword(df[f'{user_tag}.create'].sum())}, Modified : {humanize.intword(df[f'{user_tag}.modify'].sum())}\n"
                 if args.length:
                     for len_feat in args.length:
-                        user_tags_summary += f"- {len_feat} length created = {humanize.intword(round(df[f'{len_feat}_len_m'].sum()/1000))} Km\n"
+                        user_tags_summary += (
+                            f"- {len_feat} length created = {humanize.intword(round(df[f'{len_feat}_len_m'].sum()/1000))} Km\n"
+                        )
                 file.write(f"{user_tags_summary}\n")
 
                 if args.all_tags:
@@ -1405,9 +1246,7 @@ def main():
                     tag_counts = sum_tags(df["tags_create"].tolist())
 
                     # Sort the resulting dictionary by values and take the top three entries
-                    top_tags = sorted(
-                        tag_counts.items(), key=lambda x: x[1], reverse=True
-                    )[:5]
+                    top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:5]
                     created_tags_summary = "\nTop 5 Created tags are :\n"
                     # Print the top tags and their counts
                     for tag, count in top_tags:
@@ -1416,9 +1255,7 @@ def main():
                     tag_counts = sum_tags(df["tags_modify"].tolist())
 
                     # Sort the resulting dictionary by values and take the top three entries
-                    top_tags = sorted(
-                        tag_counts.items(), key=lambda x: x[1], reverse=True
-                    )[:5]
+                    top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:5]
                     modified_tags_summary = "\nTop 5 Modified tags are :\n"
                     # Print the top tags and their counts
                     for tag, count in top_tags:
@@ -1427,66 +1264,33 @@ def main():
                     file.write(f"{modified_tags_summary}\n")
 
                 if "hashtags" in df.columns[df.astype(bool).any()]:
-                    top_five = (
-                        df["hashtags"]
-                        .str.split(",")
-                        .explode()
-                        .dropna()
-                        .value_counts()
-                        .head(5)
-                    )
-                    trending_hashtags = f"\nTop 5 trending hashtags are:\n"
+                    top_five = df["hashtags"].str.split(",").explode().dropna().value_counts().head(5)
+                    trending_hashtags = "\nTop 5 trending hashtags are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_hashtags += (
-                                f"- {top_five.index[i]} : {top_five[i]} users\n"
-                            )
+                            trending_hashtags += f"- {top_five.index[i]} : {top_five[i]} users\n"
                     file.write(f"{trending_hashtags}\n")
 
                 if "editors" in df.columns[df.astype(bool).any()]:
-                    top_five = (
-                        df["editors"]
-                        .astype(str)
-                        .str.split(",")
-                        .explode()
-                        .dropna()
-                        .value_counts()
-                        .head(5)
-                    )
-                    trending_editors = f"\nTop 5 trending editors are:\n"
+                    top_five = df["editors"].astype(str).str.split(",").explode().dropna().value_counts().head(5)
+                    trending_editors = "\nTop 5 trending editors are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_editors += (
-                                f"- {top_five.index[i]} : {top_five[i]} users\n"
-                            )
+                            trending_editors += f"- {top_five.index[i]} : {top_five[i]} users\n"
                     file.write(f"{trending_editors}\n")
 
                 if "countries" in df.columns[df.astype(bool).any()]:
-                    top_five = (
-                        df["countries"]
-                        .astype(str)
-                        .str.split(",")
-                        .explode()
-                        .dropna()
-                        .value_counts()
-                        .head(5)
-                    )
-                    trending_countries = (
-                        f"\nTop 5 trending Countries where user contributed are:\n"
-                    )
+                    top_five = df["countries"].astype(str).str.split(",").explode().dropna().value_counts().head(5)
+                    trending_countries = "\nTop 5 trending Countries where user contributed are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_countries += (
-                                f"- {top_five.index[i]} : {top_five[i]} users\n"
-                            )
+                            trending_countries += f"- {top_five.index[i]} : {top_five[i]} users\n"
                     file.write(f"{trending_countries}\n")
                 if args.charts:
                     png_paths = []
                     # loop through all files in the directory
                     for ch in produced_charts_list:
-                        rel_path = os.path.relpath(
-                            os.path.join(os.getcwd(), ch), base_path
-                        )
+                        rel_path = os.path.relpath(os.path.join(os.getcwd(), ch), base_path)
                         path_components = rel_path.split(os.sep)
                         # remove any components that go "up" a directory
                         while path_components[0] == "..":
@@ -1535,11 +1339,7 @@ def main():
     # convert elapsed time to hr:min:sec format
     hours, rem = divmod(elapsed_time, 3600)
     minutes, seconds = divmod(rem, 60)
-    print(
-        "Script Completed in hr:min:sec = {:0>2}:{:0>2}:{:05.2f}".format(
-            int(hours), int(minutes), seconds
-        )
-    )
+    print("Script Completed in hr:min:sec = {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
 
 
 if __name__ == "__main__":
