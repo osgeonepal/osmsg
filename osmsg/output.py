@@ -5,6 +5,7 @@ import json
 from .models import (
     SummaryInterval,
     UserRecord,
+    POIActionCounts,
 )
 
 
@@ -51,8 +52,9 @@ def users_export_dict(record: UserRecord) -> dict:
         base["tags_modify"] = json.dumps(dict(sorted(record.tags_modify.items(), key=lambda item: item[1], reverse=True)))
 
     # flatten additional_tag_stats
-    if additional_tags and record.additional_tag_stats:
-        for tag, counts in record.additional_tag_stats.items():
+    if additional_tags:
+        for tag in additional_tags:
+            counts = record.additional_tag_stats.get(tag, POIActionCounts())
             base[f"{tag}.create"] = counts.create
             base[f"{tag}.modify"] = counts.modify
 
@@ -100,8 +102,9 @@ def summary_export_dict(record: SummaryInterval) -> dict:
         base["tags_modify"] = json.dumps(dict(sorted(record.tags_modify.items(), key=lambda item: item[1], reverse=True)))
 
     # flatten additional_tag_stats
-    if additional_tags and record.additional_tag_stats:
-        for tag, counts in record.additional_tag_stats.items():
+    if additional_tags:
+        for tag in additional_tags:
+            counts = record.additional_tag_stats.get(tag, POIActionCounts())
             base[f"{tag}.create"] = counts.create
             base[f"{tag}.modify"] = counts.modify
 

@@ -212,7 +212,7 @@ def collect_changefile_stats(user, uname, changeset, version, tags, osm_type, ti
                 users[user].additional_tag_stats[tag] = POIActionCounts()
             if tag in tags:
                 if summary:
-                    summary_interval["timestamp"].additional_tag_stats[tag].increment(action)
+                    summary_interval[timestamp].additional_tag_stats[tag].increment(action)
                 users[user].additional_tag_stats[tag].increment(action)
 
     # for length calculation
@@ -1268,7 +1268,7 @@ def main():
                     trending_hashtags = "\nTop 5 trending hashtags are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_hashtags += f"- {top_five.index[i]} : {top_five[i]} users\n"
+                            trending_hashtags += f"- {top_five.index[i]} : {top_five.iloc[i]} users\n"
                     file.write(f"{trending_hashtags}\n")
 
                 if "editors" in df.columns[df.astype(bool).any()]:
@@ -1276,7 +1276,7 @@ def main():
                     trending_editors = "\nTop 5 trending editors are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_editors += f"- {top_five.index[i]} : {top_five[i]} users\n"
+                            trending_editors += f"- {top_five.index[i]} : {top_five.iloc[i]} users\n"
                     file.write(f"{trending_editors}\n")
 
                 if "countries" in df.columns[df.astype(bool).any()]:
@@ -1284,7 +1284,7 @@ def main():
                     trending_countries = "\nTop 5 trending Countries where user contributed are:\n"
                     for i in range(0, len(top_five)):
                         if top_five.index[i].strip() != "":
-                            trending_countries += f"- {top_five.index[i]} : {top_five[i]} users\n"
+                            trending_countries += f"- {top_five.index[i]} : {top_five.iloc[i]} users\n"
                     file.write(f"{trending_countries}\n")
                 if args.charts:
                     png_paths = []
