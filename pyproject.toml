@@ -18,7 +18,9 @@ dependencies = [
     "seaborn",
     "matplotlib",
     "humanize",
-    "pytz"
+    "pytz",
+    "pydantic",
+    "duckdb",
 ]
 
 keywords = ["osm", "stats", "commandline", "openstreetmap"]
