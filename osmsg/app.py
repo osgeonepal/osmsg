@@ -67,13 +67,7 @@ from .models import (
 from .db import (
     create_tables,
     get_connection,
-    insert_changeset_stats,
-    insert_changesets,
-    insert_users,
-    prepare_changeset_row,
-    prepare_stats_row,
-    BATCH_SIZE,
-    bbox_to_wkt,
+    merge_parquet_files,
 )
 from .utils import (
     create_charts,
@@ -107,7 +101,8 @@ from .output import (
 )
 
 from .processor import (
-    worker_init,
+    cf_worker_init,
+    cs_worker_init,
     process_changefiles_worker,
     process_changesets_worker,
 )
@@ -382,7 +377,7 @@ def parse_args():
 
 
 def main():
-    print("After duckdb | pydantic")
+    print("After parallel processing implemented")
     global db_conn
     args = parse_args()
     Initialize()
@@ -645,6 +640,8 @@ def main():
                 executor.shutdown(wait=True)
 
             # Bundle all dynamic variables into a config dictionary
+        cs_temp_dir = os.path.join(os.getcwd(), "temp_cs_parquet")
+        os.makedirs(cs_temp_dir, exist_ok=True)
         cs_config = {
             "hashtags": hashtags,
             "exact_lookup": exact_lookup,
@@ -654,15 +651,13 @@ def main():
             "geom_filter_wkt": geom_filter_wkt,
             "field_mapping_editors": field_mapping_editors,
             "whitelisted_users": whitelisted_users,
+            "parquet_dir": cs_temp_dir,  # workers write parquet here
         }
 
-        import itertools
-
-        users_buffer: list = []
-        changesets_buffer: list = []
-
         print("Processing Changeset Files")
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=max_workers, initializer=cs_worker_init, initargs=(cs_config,)
+        ) as executor:
             try:
                 with tqdm(
                     total=len(changeset_download_urls),
@@ -670,62 +665,19 @@ def main():
                     unit="changesets",
                     leave=True,
                 ) as pbar:
-                    results = executor.map(
-                        process_changesets_worker, changeset_download_urls, itertools.repeat(cs_config), chunksize=10
-                    )
-                    for users, changesets in results:
-                        users_buffer.extend(users)
-                        changesets_buffer.extend(changesets)
-
-                        if len(changesets_buffer) >= BATCH_SIZE:
-                            try:
-                                # Start a single transaction for the whole batch
-                                db_conn.execute("BEGIN TRANSACTION")
-
-                                if users_buffer:
-                                    insert_users(db_conn, users_buffer)
-
-                                insert_changesets(db_conn, changesets_buffer)
-
-                                # Commit everything to disk at once
-                                db_conn.execute("COMMIT")
-
-                            except Exception as e:
-                                # If something fails, undo the whole batch to keep DB clean
-                                db_conn.execute("ROLLBACK")
-                                print(f"Failed to flush batch: {e}")
-                            finally:
-                                users_buffer.clear()
-                                changesets_buffer.clear()
+                    for _u_path, _cs_path in executor.map(process_changesets_worker, changeset_download_urls, chunksize=10):
                         pbar.update(1)
             except Exception as e:
                 print(f"An error occurred: {e}")
             finally:
                 executor.shutdown(wait=True)
 
-        try:
-            # Start a single transaction for the whole batch
-            db_conn.execute("BEGIN TRANSACTION")
-
-            if users_buffer:
-                insert_users(db_conn, users_buffer)
-
-            insert_changesets(db_conn, changesets_buffer)
-
-            # Commit everything to disk at once
-            db_conn.execute("COMMIT")
-
-        except Exception as e:
-            # If something fails, undo the whole batch to keep DB clean
-            db_conn.execute("ROLLBACK")
-            print(f"Failed to flush batch: {e}")
-        finally:
-            users_buffer.clear()
-            changesets_buffer.clear()
+        print("Merging changeset Parquet files into DuckDB …")
+        merge_parquet_files(db_conn, parquet_dir=cs_temp_dir, cleanup=True)
 
         print("Changeset Processing Finished")
 
-        # Build frozenset to filter OSM elements
+        # Build set of changeset ids to filter OSM elements
         if hashtags or collect_field_mappers_stats or geom_boundary:
             cs_id_rows = db_conn.execute("SELECT changeset_id FROM changesets").fetchall()
             valid_changeset_ids = set(r[0] for r in cs_id_rows)
@@ -733,10 +685,6 @@ def main():
         end_seq_timestamp = Changeset.sequence_to_timestamp(changeset_end_seq)
         if end_date > end_seq_timestamp:
             end_date = strip_utc(end_seq_timestamp, args.timezone)
-
-    cf_user_buf: list = []
-    cf_stub_buf: list = []
-    cf_stats_buf: list = []
 
     for url in args.url:
         print(f"Changefiles : Generating Download Urls Using {url}")
@@ -761,7 +709,7 @@ def main():
         end_date_utc = end_date.astimezone(dt.timezone.utc)
         print(f"Final UTC Date time to filter stats : {start_date_utc} to {end_date_utc}")
 
-        # Use the ThreadPoolExecutor to download the images in parallel
+        # Use the ThreadPoolExecutor to download the changefiles
         max_workers = os.cpu_count() if not args.workers else args.workers
         print(f"Using {max_workers} Threads")
 
@@ -784,6 +732,8 @@ def main():
             finally:
                 executor.shutdown(wait=True)
 
+        cf_temp_dir = os.path.join(os.getcwd(), "temp_cf_parquet")
+        os.makedirs(cf_temp_dir, exist_ok=True)
         cf_config: dict = {
             "start_date_utc": start_date_utc,
             "end_date_utc": end_date_utc,
@@ -798,14 +748,15 @@ def main():
             "whitelisted_users": whitelisted_users,
             "geom_filter_wkt": None,
             "remove_temp_files": remove_temp_files,
+            "parquet_dir": cf_temp_dir,  # workers write parquet here
         }
 
         print("Processing Changefiles")
 
-        # 1. Dynamically set chunksize based on the URL type
-        CF_CHUNKSIZE = 2 if "minute" in url.lower() else 1
+        # Dynamically set chunksize based on the URL type
+        CF_CHUNKSIZE = 10 if "minute" in url.lower() else 1
         with concurrent.futures.ProcessPoolExecutor(
-            max_workers=max_workers, initializer=worker_init, initargs=(valid_changeset_ids,)
+            max_workers=max_workers, initializer=cf_worker_init, initargs=(valid_changeset_ids, cf_config)
         ) as executor:
             try:
                 with tqdm(
@@ -814,33 +765,7 @@ def main():
                     unit="changefiles",
                     leave=True,
                 ) as pbar:
-                    results = executor.map(
-                        process_changefiles_worker, download_urls, itertools.repeat(cf_config), chunksize=CF_CHUNKSIZE
-                    )
-                    for users, changesets, changeset_stats in results:
-                        cf_user_buf.extend(users)
-                        cf_stub_buf.extend(changesets)
-                        cf_stats_buf.extend(changeset_stats)
-
-                        if len(cf_stats_buf) >= BATCH_SIZE:
-                            try:
-                                db_conn.execute("BEGIN TRANSACTION")
-
-                                if cf_user_buf:
-                                    insert_users(db_conn, cf_user_buf)
-                                if cf_stub_buf:
-                                    insert_changesets(db_conn, cf_stub_buf)
-
-                                insert_changeset_stats(db_conn, cf_stats_buf)
-
-                                db_conn.execute("COMMIT")
-                            except Exception as e:
-                                db_conn.execute("ROLLBACK")
-                                print(f"Error during changefile flush: {e}")
-                            finally:
-                                cf_user_buf.clear()
-                                cf_stats_buf.clear()
-
+                    for _u, _cs, _st in executor.map(process_changefiles_worker, download_urls, chunksize=CF_CHUNKSIZE):
                         pbar.update(1)
             except Exception as e:
                 print(f"An error occurred: {e}")
@@ -848,20 +773,12 @@ def main():
                 executor.shutdown(wait=True)
 
         print(f"Changefiles Processing Finished using {url}")
-        # Flush any remaining batches to DuckDB
-        if cf_user_buf:
-            insert_users(db_conn, cf_user_buf)
-        if cf_stub_buf:
-            insert_changesets(db_conn, cf_stub_buf)
-        if cf_stats_buf:
-            insert_changeset_stats(db_conn, cf_stats_buf)
-        print("All data flushed to DuckDB")
-        cf_user_buf.clear()
-        cf_stub_buf.clear()
-        cf_stats_buf.clear()
+        print("Merging changefile Parquet files into DuckDB …")
+        merge_parquet_files(db_conn, parquet_dir=cf_temp_dir, cleanup=True)
+        print("All data merged into DuckDB")
+        if valid_changeset_ids:
+            valid_changeset_ids.clear()
 
-    if valid_changeset_ids:
-        valid_changeset_ids.clear()
     os.chdir(os.getcwd())
     if args.temp:
         shutil.rmtree("temp")

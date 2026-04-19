@@ -1,4 +1,5 @@
 import osmium
+import os
 import re
 import datetime as dt
 from .models import (
@@ -14,20 +15,37 @@ from .utils import get_bbox_centroid, get_editors_name_strapped, get_file_path_f
 from .db import (
     prepare_changeset_row,
     prepare_stats_row,
+    flush_rows_to_parquet,
 )
 
-import os
 
 GLOBAL_VALID_CS = set()
+global_cs_config = None
+global_cf_config = None
+
+# running counter per worker process, makes parquet file names unique across batches of a process
+_worker_batch_counter: int = 0
 
 
-def worker_init(valid_cs):
+def cs_worker_init(config):
     """
-    Initializer function for ProcessPoolExecutor.
-    Runs exactly once per worker process to cache data in local memory.
+    Initializer for ProcessPoolExecutor changeset workers.
+    Runs exactly once per worker process.
     """
-    global GLOBAL_VALID_CS
+    global global_cs_config, _worker_batch_counter
+    global_cs_config = config
+    _worker_batch_counter = 0
+
+
+def cf_worker_init(valid_cs, config):
+    """
+    Initializer for ProcessPoolExecutor changefile workers.
+    Runs exactly once per worker process.
+    """
+    global GLOBAL_VALID_CS, global_cf_config, _worker_batch_counter
     GLOBAL_VALID_CS = valid_cs
+    global_cf_config = config
+    _worker_batch_counter = 0
 
 
 class LocalChangesetHandler(osmium.SimpleHandler):
@@ -41,9 +59,9 @@ class LocalChangesetHandler(osmium.SimpleHandler):
         # reconstruct shapely geometry from WKT once per worker process
         self._geom = None
         if config.get("geom_filter_wkt"):
-            from shapely import wkt as _swkt
+            from shapely import wkt
 
-            self._geom = _swkt.loads(config["geom_filter_wkt"])
+            self._geom = wkt.loads(config["geom_filter_wkt"])
 
     def changeset(self, c):
         if c.id in self.local_changesets:
@@ -51,9 +69,9 @@ class LocalChangesetHandler(osmium.SimpleHandler):
 
         config = self.config
         run_hashtag_check_logic = False
-        centroid = get_bbox_centroid(c.bounds)
 
         if self._geom is not None:
+            centroid = get_bbox_centroid(c.bounds)
             if not centroid:
                 return
             if not self._geom.contains(centroid):
@@ -106,10 +124,15 @@ class LocalChangesetHandler(osmium.SimpleHandler):
             )
 
 
-def process_changesets_worker(url, config):
-    # print(f"Processing {url}")
+def process_changesets_worker(url):
+    """
+    Process one changeset replication file and write the results to Parquet.
+    """
+    global global_cs_config, _worker_batch_counter
+    cs_config = global_cs_config
+
     file_path = get_file_path_from_url(url, "changeset")
-    handler = LocalChangesetHandler(config)
+    handler = LocalChangesetHandler(cs_config)
     try:
         handler.apply_file(file_path[:-3])
     except Exception as ex:
@@ -118,17 +141,28 @@ def process_changesets_worker(url, config):
     user_rows = [(u.uid, u.username) for u in handler.local_users.values()]
     changeset_rows = [prepare_changeset_row(c) for c in handler.local_changesets.values()]
 
-    if config.get("remove_temp_files"):
-        os.remove(file_path[:-3])
-    return user_rows, changeset_rows
+    pid = os.getpid()
+    _worker_batch_counter += 1
+    parquet_dir = cs_config.get("parquet_dir", ".")
+
+    u_path, cs_path, _ = flush_rows_to_parquet(user_rows, changeset_rows, None, pid, _worker_batch_counter, parquet_dir)
+
+    if cs_config.get("remove_temp_files"):
+        try:
+            os.remove(file_path[:-3])
+        except OSError:
+            pass
+
+    return u_path, cs_path
 
 
 class LocalChangefileHandler(osmium.SimpleHandler):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, sequence_id: str):
         super(LocalChangefileHandler, self).__init__()
         self.config = config
         self.start_date_utc = config["start_date_utc"]
         self.end_utc = config["end_date_utc"]
+        self.seq_id = sequence_id
 
         self.users: dict[int, User] = {}
         self.stubs: dict[int, Changeset] = {}
@@ -153,9 +187,9 @@ class LocalChangefileHandler(osmium.SimpleHandler):
         # Determine action
         if version == 0:
             action = Action.DELETE.value
-        if version == 1:
+        elif version == 1:
             action = Action.CREATE.value
-        if version > 1:
+        elif version > 1:
             action = Action.MODIFY.value
 
         # Calculate length if needed
@@ -171,7 +205,7 @@ class LocalChangefileHandler(osmium.SimpleHandler):
 
         # Initialize changeset stats if needed
         if changeset not in self.changeset_stats:
-            self.changeset_stats[changeset] = ChangesetStats(changeset_id=changeset, uid=uid)
+            self.changeset_stats[changeset] = ChangesetStats(changeset_id=changeset, uid=uid, seq_id=self.seq_id)
         stats = self.changeset_stats[changeset]
 
         # osm element count
@@ -257,16 +291,28 @@ class LocalChangefileHandler(osmium.SimpleHandler):
             self.accumulate(r.uid, r.user, r.changeset, version, r.tags, "relations")
 
 
-def process_changefiles_worker(url, config):
-    # Check that the request was successful
-    # Send a GET request to the URL
+def process_changefiles_worker(url):
+    """
+    Process one OSC changefile and write the results to Parquet.
+    """
+    global global_cf_config, _worker_batch_counter
+    cf_config = global_cf_config
+
     if "minute" not in url:
         print(f"Processing {url}")
+
     file_path = get_file_path_from_url(url, "changefiles")
-    # Open the .osc.gz file in read-only mode
-    handler = LocalChangefileHandler(config)
+
     try:
-        if config["length"]:
+        raw_seq = "".join(url.split("/")[-3:]).split(".")[0]
+        sequence_id = int(raw_seq)
+    except (ValueError, IndexError):
+        print(f"Error: Could not parse sequence ID from URL: {url}")
+        return None, None, None
+
+    handler = LocalChangefileHandler(cf_config, sequence_id)
+    try:
+        if cf_config["length"]:
             handler.apply_file(file_path[:-3], locations=True)
         else:
             handler.apply_file(file_path[:-3])
@@ -277,7 +323,16 @@ def process_changefiles_worker(url, config):
     stubs_rows = [prepare_changeset_row(c) for c in handler.stubs.values()]
     stats_rows = [prepare_stats_row(s) for s in handler.changeset_stats.values()]
 
-    if config.get("remove_temp_files"):
-        os.remove(file_path[:-3])
+    pid = os.getpid()
+    _worker_batch_counter += 1
+    parquet_dir = cf_config.get("parquet_dir", ".")
 
-    return users_rows, stubs_rows, stats_rows
+    u_path, cs_path, st_path = flush_rows_to_parquet(users_rows, stubs_rows, stats_rows, pid, _worker_batch_counter, parquet_dir)
+
+    if cf_config.get("remove_temp_files"):
+        try:
+            os.remove(file_path[:-3])
+        except OSError:
+            pass
+
+    return u_path, cs_path, st_path

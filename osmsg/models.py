@@ -77,6 +77,7 @@ class TagValueStat(BaseModel):
 
 class ChangesetStats(BaseModel):
     changeset_id: int
+    seq_id: int
     uid: int
 
     nodes: ElementStat = Field(default_factory=ElementStat)
@@ -87,10 +88,6 @@ class ChangesetStats(BaseModel):
     poi_modified: int = 0
 
     tag_stats: dict[str, dict[str, TagValueStat]] = Field(default_factory=dict)
-
-    @property
-    def map_changes(self) -> int:
-        return self.nodes.total + self.ways.total + self.rels.total
 
     @property
     def tag_stats_as_dict(self) -> dict:
@@ -106,21 +103,4 @@ class ChangesetStats(BaseModel):
         return {
             tag_key: {tag_val: stat.to_flat_dict for tag_val, stat in val_dict.items()}
             for tag_key, val_dict in self.tag_stats.items()
-        }
-
-    @property
-    def to_dict(self) -> dict:
-        return {
-            "nodes_created": self.nodes.c,
-            "nodes_modified": self.nodes.m,
-            "nodes_deleted": self.nodes.d,
-            "ways_created": self.ways.c,
-            "ways_modified": self.ways.m,
-            "ways_deleted": self.ways.d,
-            "rels_created": self.rels.c,
-            "rels_modified": self.rels.m,
-            "rels_deleted": self.rels.d,
-            "poi_created": self.poi_created,
-            "poi_modified": self.poi_modified,
-            "tag_stats": self.tag_stats_as_dict,
         }
