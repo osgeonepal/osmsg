@@ -21,6 +21,7 @@ dependencies = [
     "pytz",
     "pydantic",
     "duckdb",
+    "pyarrow",
 ]
 
 keywords = ["osm", "stats", "commandline", "openstreetmap"]
