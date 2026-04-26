@@ -313,8 +313,11 @@ def create_charts(df, fname):
         other_editors_count = grouped_editors.iloc[num_categories:].sum()
 
         # Create a new series with the top categories and "others" count
-        editors_data = top_editors._append(
-            pd.Series(other_editors_count, index=["Others"])
+        # editors_data = pd.concat(
+        #     pd.Series(other_editors_count, index=["Others"])
+        # )
+        editors_data = pd.concat(
+            [top_editors, pd.Series(other_editors_count, index=["Others"])]
         )
 
         # Plot the data as a pie chart using matplotlib
