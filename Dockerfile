@@ -40,7 +40,6 @@ RUN groupadd --system --gid 1000 osm \
 
 WORKDIR /work
 COPY --from=builder --chown=osm:osm /app/.venv /app/.venv
-COPY --from=builder --chown=osm:osm /app/osmsg /app/.venv/lib/python3.12/site-packages/osmsg
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

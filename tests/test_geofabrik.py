@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from osmsg.geofabrik import UnknownRegionError, country_update_url, load_index
+from osmsg.exceptions import UnknownRegionError
+from osmsg.geofabrik import country_update_url, load_index
 
 
 @pytest.mark.network

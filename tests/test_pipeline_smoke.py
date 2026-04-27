@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from platformdirs import user_cache_dir
+
 from osmsg.pipeline import RunConfig, _normalize_urls
 
 
@@ -26,4 +28,5 @@ def test_normalize_urls_dedupes():
 def test_run_config_defaults_to_parquet():
     cfg = RunConfig()
     assert cfg.formats == ["parquet"]
-    assert cfg.cache_dir.name == "temp"
+    # Library callers get the same per-user cache dir as the CLI, not a CWD-relative path.
+    assert str(cfg.cache_dir) == user_cache_dir("osmsg")

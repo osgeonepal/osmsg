@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import UTC, datetime
 
 from osmium.replication.server import ReplicationServer
 
 from ._http import session
+from .exceptions import OsmsgError
 
 PLANET_BASE = "https://planet.openstreetmap.org/replication"
 SHORTCUTS = {
@@ -46,7 +46,7 @@ def changefile_download_urls(
 
     seq = repl.timestamp_to_sequence(start_date)
     if seq is None:
-        sys.exit(f"Cannot reach replication service '{base_url}'")
+        raise OsmsgError(f"Cannot reach replication service '{base_url}'")
 
     start_seq_time = seq_to_timestamp(repl.get_state_url(seq))
     if start_date > start_seq_time:
@@ -60,7 +60,7 @@ def changefile_download_urls(
 
     state = repl.get_state_info()
     if state is None:
-        sys.exit(f"Could not fetch state info from {base_url}")
+        raise OsmsgError(f"Could not fetch state info from {base_url}")
     server_seq, server_ts = state
     server_ts = server_ts.astimezone(UTC)
 
@@ -68,7 +68,7 @@ def changefile_download_urls(
     if end_date:
         end_seq = repl.timestamp_to_sequence(end_date)
         if end_seq is None:
-            sys.exit(f"Could not resolve end_date {end_date}")
+            raise OsmsgError(f"Could not resolve end_date {end_date}")
         last_seq = end_seq
         if "minute" in base_url:
             adjust = int((seq_to_timestamp(repl.get_state_url(end_seq)) - end_date).total_seconds() / 60)

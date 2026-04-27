@@ -25,7 +25,7 @@ from .exceptions import (
     UnknownRegionError,
 )
 from .pipeline import RunConfig, run
-from .ui import console, error, render_table
+from .ui import console, error, info, render_table, warn
 
 load_dotenv()
 UTC = dt.UTC
@@ -168,8 +168,6 @@ def main(
         error("--start, --last, and --days are mutually exclusive — pick one.")
         raise typer.Exit(code=2)
     if tm_stats and not hashtags:
-        from .ui import warn
-
         warn("--tm-stats has no effect without --hashtags; TM enrichment keys off hashtags.")
 
     cfg = RunConfig(
@@ -222,9 +220,7 @@ def main(
         raise typer.Exit(code=2) from exc
     except NoDataFoundError as exc:
         # Empty window under --update: exit 0 so cron doesn't flag a no-op as failure.
-        from .ui import info as _info
-
-        _info(str(exc))
+        info(str(exc))
         raise typer.Exit(code=0) from exc
     except OsmsgError as exc:
         error(str(exc))

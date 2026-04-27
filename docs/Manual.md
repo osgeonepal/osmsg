@@ -112,4 +112,4 @@ osmsg --start "2025-01-01 00:00:00" --end "2026-01-01 00:00:00" \
 osmsg --country nepal --update
 ```
 
-> See [Stats.md](./Stats.md) for how each field is computed.
+> `map_changes` per row is the sum of the nine element columns (`{nodes,ways,rels}_{created,modified,deleted}`); POI counters are tracked separately.

@@ -38,4 +38,4 @@ def country_update_url(region_id: str) -> str:
     return idx[key]
 
 
-__all__ = ["INDEX_URL", "UnknownRegionError", "country_update_url", "load_index"]
+__all__ = ["INDEX_URL", "country_update_url", "load_index"]

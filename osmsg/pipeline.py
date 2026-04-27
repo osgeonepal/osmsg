@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from platformdirs import user_cache_dir
+
 from . import db as dbmod
 from . import tm
 from .__version__ import __version__
@@ -25,6 +27,10 @@ from .replication import ChangesetReplication, changefile_download_urls, resolve
 from .ui import info, progress_bar
 
 UTC = dt.UTC
+
+
+def _default_cache_dir() -> Path:
+    return Path(user_cache_dir("osmsg"))
 
 
 @dataclass
@@ -49,7 +55,7 @@ class RunConfig:
     formats: list[str] = field(default_factory=lambda: ["parquet"])
     update: bool = False
     delete_temp: bool = False
-    cache_dir: Path = Path("temp")
+    cache_dir: Path = field(default_factory=_default_cache_dir)
     osm_username: str | None = None
     osm_password: str | None = None
     psql_dsn: str | None = None
@@ -149,8 +155,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     info(f"osmsg {__version__}")
     _normalize_urls(cfg)
 
+    cs_dir = cfg.cache_dir / "scratch_cs"
+    cf_dir = cfg.cache_dir / "scratch_cf"
     # Drop scratch dirs in case a previous run crashed mid-write.
-    for scratch in (Path("temp_cs_parquet"), Path("temp_cf_parquet")):
+    for scratch in (cs_dir, cf_dir):
         if scratch.exists():
             shutil.rmtree(scratch, ignore_errors=True)
 
@@ -202,8 +210,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         info(f"Changesets: {len(urls)} files (seq {cs_start}–{cs_end})")
 
         if urls:
-            cs_dir = Path("temp_cs_parquet")
-            cs_dir.mkdir(exist_ok=True)
+            cs_dir.mkdir(parents=True, exist_ok=True)
             cs_config = _processing_config(cfg, parquet_dir=cs_dir, geom_wkt=geom_wkt)
 
             _download_all(urls, "changeset", max_workers, None, cfg.cache_dir, "changesets")
@@ -239,8 +246,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             info(f"  {url}: already up-to-date")
             continue
 
-        cf_dir = Path("temp_cf_parquet")
-        cf_dir.mkdir(exist_ok=True)
+        cf_dir.mkdir(parents=True, exist_ok=True)
         cf_config = _processing_config(cfg, parquet_dir=cf_dir, geom_wkt=None)
         cf_config["start_date_utc"] = start_date_utc
         cf_config["end_date_utc"] = end_date_utc

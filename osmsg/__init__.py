@@ -91,6 +91,5 @@ __all__ = [
     "to_parquet",
     "to_psql",
     "upsert_state",
-    "upsert_state",
     "user_stats",
 ]

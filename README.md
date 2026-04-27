@@ -8,6 +8,8 @@ OpenStreetMap stats generator. UTC-only, parquet-first, OAuth 2.0.
 pip install osmsg
 # or
 uv tool install osmsg
+# or
+docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last hour
 ```
 
 ## Quick start (CLI)
@@ -102,7 +104,7 @@ Four tables, identical in DuckDB and PostgreSQL — write once, query anywhere.
 | `changeset_stats` | flat counts + nested `tag_stats` JSON |
 | `state` | resume marker — exactly one row per source_url (UPSERTed each run) |
 
-`map_changes` is computed at query time (sum of nine integer columns). See [docs/Stats.md](./docs/Stats.md) for the full methodology.
+`map_changes` is computed at query time as the sum of the nine element columns (`{nodes,ways,rels}_{created,modified,deleted}`); POI counters are tracked separately and never folded in.
 
 ## Developer setup
 

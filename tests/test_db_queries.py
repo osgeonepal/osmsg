@@ -48,16 +48,16 @@ def test_user_stats_aggregates_across_changesets_per_user(populated_db):
     assert alice["nodes_create"] == 40  # 30 + 10
     assert alice["ways_create"] == 12  # 8 + 4
     assert alice["poi_create"] == 5
-    assert (
-        alice["map_changes"]
-        == alice["nodes_create"]
+    assert alice["map_changes"] == (
+        alice["nodes_create"]
         + alice["nodes_modify"]
         + alice["nodes_delete"]
         + alice["ways_create"]
         + alice["ways_modify"]
-        + alice["ways_deleted"]
-        if False
-        else alice["map_changes"]
+        + alice["ways_delete"]
+        + alice["rels_create"]
+        + alice["rels_modify"]
+        + alice["rels_delete"]
     )
 
 
