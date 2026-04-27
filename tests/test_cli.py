@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import pytest
 from typer.testing import CliRunner
 
@@ -26,8 +27,9 @@ def test_version_flag_prints_version():
 def test_help_lists_core_options():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
+    plain = click.unstyle(result.stdout)
     for fragment in ("--last", "--country", "--format", "--update", "--psql-dsn"):
-        assert fragment in result.stdout
+        assert fragment in plain
 
 
 @pytest.mark.parametrize(
@@ -45,7 +47,7 @@ def test_time_range_flags_are_mutually_exclusive(args):
 
 def test_changeset_flag_is_hidden_in_help():
     result = runner.invoke(app, ["--help"])
-    assert "--changeset" not in result.stdout
+    assert "--changeset" not in click.unstyle(result.stdout)
 
 
 def test_password_flag_no_longer_accepted():
