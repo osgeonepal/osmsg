@@ -9,17 +9,17 @@ authors = [
 license = {text = "GPL-3.0-only"}
 requires-python = ">=3.12"
 dependencies = [
-    "duckdb",
-    "osmium",
-    "platformdirs",
-    "pyarrow",
-    "pydantic",
-    "python-dotenv",
-    "pytz",         # transitive runtime requirement of duckdb (TIMESTAMPTZ → datetime)
-    "requests",
-    "shapely",
-    "typer",
-    "typer-config[yaml]",
+    "duckdb>=1.5.2",
+    "osmium>=4.3.1",
+    "platformdirs>=4.5.1",
+    "pyarrow>=24.0.0",
+    "pydantic>=2.13.3",
+    "python-dotenv>=1.2.2",
+    "pytz>=2026.1.post1",
+    "requests>=2.32.5",
+    "shapely>=2.1.2",
+    "typer>=0.25.0",
+    "typer-config[yaml]>=1.5.1",
 ]
 
 keywords = ["osm", "stats", "commandline", "openstreetmap"]
@@ -56,13 +56,13 @@ module-root = ""
 
 [dependency-groups]
 dev = [
-    "commitizen",
-    "pre-commit",
-    "ruff",
-    "ty",
     "pytest>=7.4.2",
     "pytest-mock>=3.14.0",
     "coverage>=7.6.1",
+    "ty>=0.0.32",
+    "ruff>=0.15.12",
+    "pre-commit>=4.6.0",
+    "commitizen>=4.13.10",
 ]
 
 [tool.pytest.ini_options]
