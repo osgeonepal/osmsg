@@ -1,38 +1,51 @@
-# Stage 1: Build
+# syntax=docker/dockerfile:1.7
+
+# ── Stage 1: build the wheel + venv with uv ────────────────────────────────────
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    osmium-tool \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install dependencies only (for caching)
-COPY pyproject.toml uv.lock* README.md ./
+# Dependency layer — cached on uv.lock unchanged.
+COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
-# Copy source code and finish sync
+# Project layer.
 COPY osmsg /app/osmsg
-COPY data /app/data
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# Stage 2: Final
-FROM python:3.12-slim-bookworm
+# ── Stage 2: slim Python 3.12 runtime ──────────────────────────────────────────
+# pyosmium ships manylinux/musllinux wheels with libosmium statically linked, so
+# we don't need apt-installed osmium-tool here.  We use python:3.12-slim instead
+# of gcr.io/distroless/python3 because distroless still defaults to Python 3.11.
+FROM python:3.12-slim-bookworm AS runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    osmium-tool \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Minimal runtime libs:
+#   ca-certificates → HTTPS to planet/geofabrik/OSM
+#   libexpat1       → pyosmium's XML parser (libosmium links to it dynamically)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Run as a non-root user.
+RUN groupadd --system --gid 1000 osm \
+    && useradd  --system --gid osm --uid 1000 --create-home --home-dir /home/osm osm
 
-COPY --from=builder /app /app
+WORKDIR /work
+COPY --from=builder --chown=osm:osm /app/.venv /app/.venv
+COPY --from=builder --chown=osm:osm /app/osmsg /app/.venv/lib/python3.12/site-packages/osmsg
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-CMD ["/bin/bash"]
+USER osm
+ENTRYPOINT ["osmsg"]
+CMD ["--help"]

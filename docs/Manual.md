@@ -1,94 +1,115 @@
-### Example Commands
+# Manual
 
-- To extract stats of last_hour for whole_world Using Planet Replication with specific tags
+## Time range
 
-```
-osmsg --url "https://planet.openstreetmap.org/replication/minute" --format csv --tags building highway waterway amenity --name stats --all_tags --last_hour
-```
-
-In order to extract for specific country just add --country with country name as in [data/countries.csv](./data/countries.csv) for eg : For Nepal : `--country Nepal`
-
-- To extract stats for last day whole world with all the tags and specified stat :
-  
-  You can either pass url "https://planet.openstreetmap.org/replication/day" itself or if you want to use planet default replciation url you can simply pass as : minute , day & hour , script will get url itself  
-```
-osmsg  --url day --format csv --last_day --name stats --all_tags
+```bash
+osmsg --last hour|day|week|month|year
+osmsg --days 7
+osmsg --start "2026-04-01 00:00:00" --end "2026-04-08 00:00:00"
+osmsg --update                       # resume from last finished run in <name>.duckdb
 ```
 
-If you wish to have tags with specific count for key you can include them as `--tags "building" "highway" ` & add --country to extract specific country , if you use geofabrik country updates you don't need to use --country option
+> Times are UTC.
 
-- To extract specific country with Geofabrik URL (extracts stats for 15 days custom date range)
+## Source
 
-```
-export OSM_USERNAME="yourusername"
-export OSM_PASSWORD="yourpassword"
-
-osmsg  --url "http://download.geofabrik.de/asia/nepal-updates" --format csv --start_date "2023-01-15 00:00:00+00:00" --end_date "2023-01-30 00:00:00+00:00" --name all_tags_stats --all_tags
-```
-
-- To get stat of country for year with geofabrik replication:
-
-  Example of nepal for year of 2022
-
-  Processing geofabrik country based osm change files are faster as they will have changes only for country and smaller in size , or you can pass --country parameter and pass id from data/countries.csv
-
-```
-osmsg --start_date "2022-01-01 00:00:00+00:00" --url "http://download.geofabrik.de/asia/nepal-updates" --username 'your osm username' --password 'user osm password' --tags 'building' 'highway' 'waterway' 'amenity'  --format csv
+```bash
+osmsg --url minute|hour|day          # planet replication shortcuts
+osmsg --url https://...              # any OSM replication base
+osmsg --country nepal --country india --country africa   # Geofabrik regions, resolved live
 ```
 
-- To extract on-going mapathons statistics 
+## Filters
 
-  Example of extract last 8 days of data for Turkey and Syria using hashtag smforst with geofabrik as source
-  --summary will allow to divide and provide stats as summary sepearated by daily , You can use this to get both summary csv and user contribution csv ! 
-```
-osmsg --country turkey syria --username "OSM USERNAME" --password "OSM PASSWORD" --hashtags smforst --length highway --force --days 6 --tags building highway amenity waterway --all_tags --summary
-```
-
-- Extract mapathon stats for hashtag only 
-  
-  You can use --length to get length of created features , supported for way features along with count
-```
-osmsg --url minute --hashtags mymapathonhashtag1 hashtag2 --length highway --force --tags building highway amenity waterway --all_tags --summary --start_date "2023-01-15 00:00:00+00:00" --end_date "2023-01-15 11:59:00+00:00"
-```
-Or you can simply say --last_day like this , can use hour replication to avoid processing too many files 
-
-```
-osmsg --url hour --hashtags mymapathonhashtag1 hashtag2 --length highway --force --tags building highway amenity waterway --all_tags --summary --last_day
+```bash
+osmsg --hashtags hotosm-project-1234 --hashtags mapathon
+osmsg --hashtags mapathon --exact-lookup       # match whole hashtag, not substring
+osmsg --users alice --users bob
+osmsg --boundary region.geojson
 ```
 
-Check more commands examples inside `stats/` `stats_metadata.json`
+> Each `--users`, `--hashtags`, `--tags`, `--length`, `--country`, `--url`, `-f`
+> takes one value at a time; pass the flag again for additional values.
 
-Now start generating stats with above sample commands
+> Editor stats are always included when `--changeset` or `--hashtags` is on:
+> the `editors` column lists every `created_by` tag the user appeared with.
 
-### TIPS & Tricks of using OSMSG:
+## Tag stats
 
-OSMSG uses/supports sources , --url provided on argument will be used for osm changefiles and for changeset it is default of planet replication/minute ( used for hashtag and country )
-
-1. To process weekly / monthly or yearly stats , Using minute replication might take forever on small machines , You can use daily replication files `/replication/day` to process faster and avoid network download issues for small minute fiels
-
-2. If you are generating stats for rightnow / past 10min / past 1 hour using specific timeframe , stick with minutely (Sometimes to reflect changes you made on stats , Planet may take few minutes)
-
-3. For hashtag stats , planet changeset minute replication is by default for now (Found only this reliable source , couldn't find daily/monthly replication files) , Generating daily/weekly is feasible , To generate more than that you can supply multiple countries geofabrik urls so that script can go through only country changefiles as stated on example above for turkey and syria , similarly you can pass your countries url and generate monthly yearly etc or you can run osmsg one time for a year it will download and store osm files , and next time when you run it would avoid downloading and it can generate stats quicker
-
-4. For Country stats , if you use the --country option : You can also pass country name id supported from data/countries.csv and it supports multiple countries at a time  if supplied , Name would be automatically translated to available geofabrik URL or You can pass your own URL eg :
-
-```
-osmsg --url "http://download.geofabrik.de/asia/nepal-updates" --username '${{ secrets.OSM_USERNAME }}' --password '${{ secrets.OSM_PASSWORD }}' --format csv --last_month --tags 'building' 'highway' 'waterway' 'amenity' --name last_month_stats  --all_tags
-```
-5. It is recommended use same dir for running osmsg because osmsg stores downloaded osm files to temp dir and it can be reused next time you run stats on same period , avoids downloading all again, for eg : I run some stats for #hashtag1 for last month , and i want to run again for #hashtag2 , osmsg will use same downloaded files and avoid downloading for second time if you use the same dir for running 
-
-### Benchmarks :
-
-Speed depends upon no of cores available on your CPU and your internet speed
-Generally on Normal i5 machine To process a year of data for country like Nepal it takes approx 3min .
-
-### OSM LOGIN info
-
-OSM Username and Password are not Mandatory , They are only required if you want to use geofabrik internal changefiles , There are two options you can either pass your username password on command line or export those in your env variable and script will pick it from there so that you don't need to pass your username and password to command itself like this.
-
-```
-export OSM_USERNAME="yourusername"
-export OSM_PASSWORD="yourpassword"
+```bash
+osmsg --tags building --tags highway           # per-key create/modify counts
+osmsg --length highway --length waterway       # length in metres for created ways
+osmsg --all-tags                               # every tag key
+osmsg --all-tags --key-value                   # also key=value combos
 ```
 
-Now use command as it is without username and password , OSM Login is enabled from Geofabrik [itself](https://github.com/geofabrik/sendfile_osm_oauth_protector) So OSMSG Doesn't uses any third party tool/methododology for the authentication
+## Output
+
+```bash
+osmsg --last day -f parquet                    # default; one columnar file
+osmsg --last day -f csv -f json -f markdown
+osmsg --last day --summary                     # daily breakdown in each requested format
+osmsg --last day -f psql --psql-dsn "host=localhost dbname=osm user=osm"
+```
+
+> Every run writes `<name>.duckdb` plus the formats you ask for. Parquet is the canonical exchange — open with DuckDB, polars, or pandas directly.
+
+> `--summary` follows the same `-f` formats: requesting `-f csv --summary` produces both `<name>.csv` and `<name>_summary.csv`. The `psql` target is intentionally skipped for summary — the daily breakdown is just a query over the four base tables, so consumers derive it on demand instead of duplicating data.
+
+## Config file
+
+Long invocations are easier to maintain in YAML. Keys mirror the CLI flag names.
+
+```bash
+osmsg --config nepal.yaml                      # all flags from yaml
+osmsg --config nepal.yaml --rows 50            # CLI overrides yaml
+```
+
+```yaml
+# nepal.yaml
+name: nepal_weekly
+country: [nepal]
+last: week
+hashtags:
+  - hotosm-project-1234
+  - mapathon
+users: [alice, bob, charlie]
+tags: [building, highway]
+formats: [parquet, markdown]
+summary: true
+update: true
+```
+
+## Caching
+
+Downloaded `.osc.gz` files cache to a per-user dir (`~/Library/Caches/osmsg` on macOS, `~/.cache/osmsg` on Linux). Re-running the same range reuses them — no network needed. `--cache-dir` to relocate, `--delete-temp` to clean up after a run.
+
+## Credentials
+
+`--country` and any `geofabrik` URL need OSM credentials. Resolution order:
+
+1. `--username` (CLI) + `OSM_PASSWORD` env var, or `--password-stdin` to pipe a password in (e.g. `cat secret | osmsg --password-stdin ...`)
+2. `OSM_USERNAME` + `OSM_PASSWORD` env vars (auto-loaded from `.env`)
+3. Interactive prompt (TTY only)
+
+> The CLI does not accept `--password` directly — passwords on the command line leak into shell history and `ps` output. Use stdin or env vars.
+
+## Recipes
+
+```bash
+# Daily Nepal stats with summary
+osmsg --country nepal --last day --summary --tags building --tags highway
+
+# Mapathon report (hashtag substring, last 6 days, with TM totals)
+osmsg --hashtags smforst --days 6 --summary --tm-stats
+
+# Full year of global stats to Postgres (incremental-friendly)
+osmsg --start "2025-01-01 00:00:00" --end "2026-01-01 00:00:00" \
+      --url day --all-tags -f parquet -f psql \
+      --psql-dsn "host=localhost dbname=osm_stats user=osm"
+
+# Cron / systemd: refresh Nepal nightly
+osmsg --country nepal --update
+```
+
+> See [Stats.md](./Stats.md) for how each field is computed.

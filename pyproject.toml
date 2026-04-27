@@ -1,27 +1,25 @@
 [project]
 name = "osmsg"
-dynamic = ["version"]
+version = "0.4.0"
 description = "OpenStreetMap Stats Generator: Commandline"
 readme = "README.md"
 authors = [
     {name = "Kshitij Raj Sharma", email = "skshitizraj@gmail.com"},
 ]
 license = {text = "GPL-3.0-only"}
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
-    "pandas",
+    "duckdb",
     "osmium",
+    "platformdirs",
+    "pyarrow",
+    "pydantic",
+    "python-dotenv",
+    "pytz",         # transitive runtime requirement of duckdb (TIMESTAMPTZ → datetime)
     "requests",
     "shapely",
-    "geopandas",
-    "tqdm",
-    "seaborn",
-    "matplotlib",
-    "humanize",
-    "pytz",
-    "pydantic",
-    "duckdb",
-    "pyarrow",
+    "typer",
+    "typer-config[yaml]",
 ]
 
 keywords = ["osm", "stats", "commandline", "openstreetmap"]
@@ -29,24 +27,15 @@ classifiers = [
     "Topic :: Utilities",
     "Topic :: Scientific/Engineering :: GIS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 
 [project.urls]
-homepage = "https://github.com/kshitijrajsharma/osmsg"
-documentation = "https://github.com/kshitijrajsharma/osmsg"
-repository = "https://github.com/kshitijrajsharma/osmsg"
+homepage = "https://github.com/osgeonepal/osmsg"
+documentation = "https://github.com/osgeonepal/osmsg"
+repository = "https://github.com/osgeonepal/osmsg"
 
 [project.optional-dependencies]
-test = [
-    "pytest>=7.4.2",
-    "pytest-mock>=3.14.0",
-    "coverage>=7.6.1",
-    "coverage-badge>=1.1.2",
-]
 docs = [
     "mkdocs>=1.5.3",
     "mkdocs-material>=9.4.2",
@@ -55,26 +44,33 @@ docs = [
 ]
 
 [project.scripts]
-osmsg = "osmsg.app:main"
+osmsg = "osmsg.cli:app"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.5.15,<0.9"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "osmsg"
+module-root = ""
 
 [dependency-groups]
 dev = [
     "commitizen",
     "pre-commit",
-]
-
-ui = [
-    "streamlit>=1.44.1",
+    "ruff",
+    "ty",
+    "pytest>=7.4.2",
+    "pytest-mock>=3.14.0",
+    "coverage>=7.6.1",
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra -q -p no:warnings"
+addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
-pythonpath = "osmsg"
+markers = [
+    "network: tests that hit the public internet (deselect with -m 'not network').",
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -87,16 +83,9 @@ version_files = [
     "osmsg/__version__.py",
 ]
 
-[tool.hatch.version]
-path = "osmsg/__version__.py"
-
-[tool.black]
-line-length = 132
-target-versions = ["py39", "py310", "py311", "py312"]
-
 [tool.ruff]
 fix = true
-line-length = 132
+line-length = 120
 target-version = "py312"
 exclude = [
     ".git",
@@ -109,10 +98,14 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["I", "E", "W", "D", "B", "F", "N", "Q"]
+select = ["I", "E", "W", "B", "F", "N", "Q", "UP", "SIM"]
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.src]
+include = ["osmsg"]
 
 [tool.coverage.run]
 source = ["osmsg"]
