@@ -153,6 +153,13 @@ def main(
     cache_dir: Annotated[
         Path, typer.Option("--cache-dir", help="Cache dir for downloaded OSM files.")
     ] = DEFAULT_CACHE_DIR,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Where to write <name>.duckdb + selected formats. Defaults to current directory.",
+        ),
+    ] = Path("."),
     delete_temp: Annotated[
         bool,
         typer.Option(
@@ -202,6 +209,7 @@ def main(
         formats=[f.value for f in formats],
         update=update,
         cache_dir=cache_dir,
+        output_dir=output_dir,
         delete_temp=delete_temp,
         osm_username=username,
         osm_password=_read_password_stdin() if password_stdin else None,

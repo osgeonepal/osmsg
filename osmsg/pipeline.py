@@ -25,13 +25,21 @@ from .export import summary_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
 from .geofabrik import country_update_url
 from .replication import ChangesetReplication, changefile_download_urls, resolve_url
-from .ui import info, progress_bar
+from .ui import info, progress_bar, warn
 
 UTC = dt.UTC
 
 
 def _default_cache_dir() -> Path:
     return Path(user_cache_dir("osmsg"))
+
+
+def _cpu_count() -> int:
+    # sched_getaffinity is cgroup-aware (matters in containers); not present on macOS/Windows.
+    sched = getattr(os, "sched_getaffinity", None)
+    if sched is not None:
+        return len(sched(0))
+    return os.cpu_count() or 4
 
 
 @dataclass
@@ -57,6 +65,7 @@ class RunConfig:
     update: bool = False
     delete_temp: bool = False
     cache_dir: Path = field(default_factory=_default_cache_dir)
+    output_dir: Path = field(default_factory=lambda: Path("."))
     osm_username: str | None = None
     osm_password: str | None = None
     psql_dsn: str | None = None
@@ -72,6 +81,27 @@ def _normalize_urls(cfg: RunConfig) -> None:
         return
     # Order-preserving dedupe: cfg.urls[0] is load-bearing for resume.
     cfg.urls = list(dict.fromkeys(resolve_url(u) for u in cfg.urls))
+
+
+def _canonical_hashtags(hashtags: list[str]) -> list[str]:
+    # Force leading '#' so 'hotosm' and '#hotosm' both match the '#hotosm' tokens in changeset comments.
+    return ["#" + h.lstrip("#") for h in hashtags]
+
+
+def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, dt.datetime]:
+    if cfg.update:
+        if not cfg.urls:
+            raise OsmsgError("--update requires at least one source URL.")
+        starts: dict[str, dt.datetime] = {}
+        for url in cfg.urls:
+            last = get_state(conn, url)
+            if not last:
+                raise OsmsgError(f"--update has no prior state for {url}. Run osmsg without --update first to seed it.")
+            starts[url] = last["last_ts"]
+        return starts
+    if cfg.start_date is None:
+        raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
+    return {url: cfg.start_date for url in cfg.urls}
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
@@ -168,6 +198,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     info(f"osmsg {__version__}")
     _normalize_urls(cfg)
+    if cfg.hashtags:
+        cfg.hashtags = _canonical_hashtags(cfg.hashtags)
+
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     cs_dir = cfg.cache_dir / "scratch_cs"
     cf_dir = cfg.cache_dir / "scratch_cf"
@@ -178,35 +212,35 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     cookie = _ensure_credentials(cfg)
 
-    db_path = Path(f"{cfg.name}.duckdb")
+    db_path = cfg.output_dir / f"{cfg.name}.duckdb"
     if not cfg.update and db_path.exists():
         db_path.unlink()
     conn = dbmod.connect(str(db_path))
     dbmod.create_tables(conn)
     info(f"DuckDB: {db_path}")
 
-    url_starts: dict[str, dt.datetime] = {}
+    url_starts = _resolve_url_starts(conn, cfg)
     if cfg.update:
-        if not cfg.urls:
-            raise OsmsgError("--update requires at least one source URL.")
-        for url in cfg.urls:
-            last = get_state(conn, url)
-            if not last:
-                raise OsmsgError(f"--update has no prior state for {url}. Run osmsg without --update first to seed it.")
-            url_starts[url] = last["last_ts"]
         # Changeset-replication reads one planet-wide source; widest window covers every URL.
         cfg.start_date = min(url_starts.values())
         info(f"--update: resuming each source from its own state row (earliest: {cfg.start_date.isoformat()})")
-    else:
-        if cfg.start_date is None:
-            raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
-        for url in cfg.urls:
-            url_starts[url] = cfg.start_date
 
     if cfg.end_date is None:
         cfg.end_date = dt.datetime.now(UTC)
+    # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
+    assert cfg.start_date is not None
     if cfg.start_date >= cfg.end_date:
         raise OsmsgError("start_date >= end_date — nothing to do.")
+
+    span = cfg.end_date - cfg.start_date
+    info(f"Range: {cfg.start_date.isoformat()} → {cfg.end_date.isoformat()} ({span})")
+    span_hours = span.total_seconds() / 3600
+    # 72h on minute replication is ~4,300 files; beyond that, hour/day replication is much cheaper.
+    if span_hours >= 72 and any("minute" in u.lower() for u in cfg.urls):
+        warn(
+            f"Range spans {span_hours:.0f}h on minute replication "
+            f"(~{int(span_hours * 60):,} files). Consider --url hour or --url day."
+        )
 
     geom_wkt = None
     if cfg.boundary:
@@ -217,10 +251,11 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     if (cfg.tm_stats or cfg.summary) and not cfg.changeset and not cfg.hashtags:
         cfg.changeset = True
 
-    max_workers = cfg.workers or os.cpu_count() or 4
+    max_workers = cfg.workers or _cpu_count()
     info(f"Workers: {max_workers}")
 
-    valid_changesets: set[int] = set()
+    # None == no filter active; empty set == filter matched nothing (drop everything).
+    valid_changesets: set[int] | None = None
     start_seq: int | None = None
     end_seq: int | None = None
 
@@ -324,20 +359,22 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     if cfg.tm_stats:
         rows = tm.enrich(rows)
 
+    out = cfg.output_dir
     written: dict[str, str] = {}
     if "parquet" in cfg.formats:
-        written["parquet"] = str(to_parquet(rows, Path(f"{cfg.name}.parquet")))
+        written["parquet"] = str(to_parquet(rows, out / f"{cfg.name}.parquet"))
     if "csv" in cfg.formats:
-        written["csv"] = str(to_csv(rows, Path(f"{cfg.name}.csv")))
+        written["csv"] = str(to_csv(rows, out / f"{cfg.name}.csv"))
     if "json" in cfg.formats:
-        written["json"] = str(to_json(rows, Path(f"{cfg.name}.json")))
+        written["json"] = str(to_json(rows, out / f"{cfg.name}.json"))
 
     if "markdown" in cfg.formats:
         from .export.markdown import summary_markdown as render_md
 
+        md_path = out / f"{cfg.name}.md"
         render_md(
             rows,
-            output_path=Path(f"{cfg.name}.md"),
+            output_path=md_path,
             start_date=start_date_utc,
             end_date=end_date_utc,
             additional_tags=cfg.additional_tags,
@@ -346,7 +383,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             fname=cfg.name,
             tm_stats=cfg.tm_stats,
         )
-        written["markdown"] = f"{cfg.name}.md"
+        written["markdown"] = str(md_path)
 
     summary_rows: list[dict[str, Any]] | None = None
     if cfg.summary:
@@ -359,15 +396,16 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         )
     if summary_rows:
         if "parquet" in cfg.formats:
-            written["summary_parquet"] = str(to_parquet(summary_rows, Path(f"{cfg.name}_summary.parquet")))
+            written["summary_parquet"] = str(to_parquet(summary_rows, out / f"{cfg.name}_summary.parquet"))
         if "csv" in cfg.formats:
-            written["summary_csv"] = str(to_csv(summary_rows, Path(f"{cfg.name}_summary.csv")))
+            written["summary_csv"] = str(to_csv(summary_rows, out / f"{cfg.name}_summary.csv"))
         if "json" in cfg.formats:
-            written["summary_json"] = str(to_json(summary_rows, Path(f"{cfg.name}_summary.json")))
+            written["summary_json"] = str(to_json(summary_rows, out / f"{cfg.name}_summary.json"))
         if "markdown" in cfg.formats:
+            summary_md_path = out / f"{cfg.name}_summary.md"
             summary_markdown(
                 rows,
-                output_path=Path(f"{cfg.name}_summary.md"),
+                output_path=summary_md_path,
                 start_date=start_date_utc,
                 end_date=end_date_utc,
                 additional_tags=cfg.additional_tags,
@@ -376,12 +414,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 fname=cfg.name,
                 tm_stats=cfg.tm_stats,
             )
-            written["summary_md"] = f"{cfg.name}_summary.md"
+            written["summary_md"] = str(summary_md_path)
         # psql: skipped on purpose — daily_summary is a query over the four base tables.
 
     if "psql" in cfg.formats:
         if not cfg.psql_dsn:
-            raise OsmsgError("'psql' format requires RunConfig.psql_dsn (libpq DSN string).")
+            raise OsmsgError("'psql' format requires a libpq DSN (--psql-dsn / RunConfig.psql_dsn=...).")
         info(f"Pushing to PostgreSQL: {cfg.psql_dsn.split()[0]}…")
         to_psql(conn, cfg.psql_dsn)
         written["psql"] = cfg.psql_dsn

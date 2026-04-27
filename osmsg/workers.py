@@ -17,7 +17,7 @@ def _warn(msg: str) -> None:
     print(f"warning: {msg}", file=sys.stderr)
 
 
-_VALID_CHANGESETS: set[int] = set()
+_VALID_CHANGESETS: set[int] | None = None
 _CS_CONFIG: dict[str, Any] | None = None
 _CF_CONFIG: dict[str, Any] | None = None
 _BATCH_COUNTER: int = 0
@@ -29,7 +29,7 @@ def init_changeset_worker(config: dict[str, Any]) -> None:
     _BATCH_COUNTER = 0
 
 
-def init_changefile_worker(valid_changesets: set[int], config: dict[str, Any]) -> None:
+def init_changefile_worker(valid_changesets: set[int] | None, config: dict[str, Any]) -> None:
     global _VALID_CHANGESETS, _CF_CONFIG, _BATCH_COUNTER
     _VALID_CHANGESETS = valid_changesets
     _CF_CONFIG = config

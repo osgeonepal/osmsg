@@ -12,9 +12,38 @@ from __future__ import annotations
 import duckdb
 
 from osmsg.db.ingest import flush_rows_to_parquet, merge_parquet_files
-from osmsg.db.queries import user_stats
+from osmsg.db.queries import attach_metadata, list_changesets, user_stats
 from osmsg.db.schema import create_tables
-from osmsg.handlers import ChangefileHandler
+from osmsg.handlers import ChangefileHandler, ChangesetHandler
+
+
+def _write_changeset_xml(tmp_path, name, changesets):
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6">']
+    for cs in changesets:
+        parts.append(
+            f'  <changeset id="{cs["id"]}" '
+            f'created_at="{cs.get("created_at", "2026-04-27T20:00:00Z")}" '
+            f'closed_at="{cs.get("closed_at", "2026-04-27T21:00:00Z")}" open="false" '
+            f'num_changes="{cs.get("num_changes", 1)}" user="{cs.get("user", "alice")}" '
+            f'uid="{cs.get("uid", 10)}" comments_count="0">'
+        )
+        for k, v in cs.get("tags", {}).items():
+            parts.append(f'    <tag k="{k}" v="{v}"/>')
+        parts.append("  </changeset>")
+    parts.append("</osm>")
+    p = tmp_path / name
+    p.write_text("\n".join(parts), encoding="utf-8")
+    return p
+
+
+def _flush_changesets(handler: ChangesetHandler, parquet_dir, pid: int = 1, batch: int = 1):
+    flush_rows_to_parquet(
+        parquet_dir=parquet_dir,
+        pid=pid,
+        batch_index=batch,
+        users=[u.to_row() for u in handler.users.values()],
+        changesets=[c.to_row() for c in handler.changesets.values()],
+    )
 
 
 def _flush(handler: ChangefileHandler, parquet_dir, pid: int = 1, batch: int = 1):
@@ -342,3 +371,172 @@ def test_merge_picks_up_every_worker_shard(tmp_path, osc_factory, changefile_con
     assert rows[0]["changesets"] == 1  # COUNT(DISTINCT changeset_id), not COUNT(*)
     # nodes_create sums across all 8 shards
     assert rows[0]["nodes_create"] == 8
+
+
+# 7) Hashtag pipeline ground-truth — the user-facing guarantee that motivates this tool.
+#    A change to either ChangesetHandler or ChangefileHandler that drops a single
+#    matched changeset, miscounts an element, or loses a hashtag must fail this test.
+#    The fixture mirrors real-world quirks observed in OSM changeset replication:
+#       - hashtag in `comment` only (the classic case)
+#       - hashtag ONLY in the `hashtags` field (was the live regression: "Yovani V")
+#       - hashtag in BOTH fields (must dedup, must not double-count edits)
+#       - same hashtag in different case (substring filter must be case-insensitive)
+#       - changeset that DOES NOT match the filter (must NOT appear and its edits
+#         must NOT be counted, even though they sit in the same .osc file)
+
+
+def test_hashtag_pipeline_end_to_end_no_contribution_lost(tmp_path, osc_factory, changefile_config):
+    cs_xml = _write_changeset_xml(
+        tmp_path,
+        "cs.osm",
+        [
+            {"id": 1, "user": "alice", "uid": 10,
+             "tags": {"comment": "Mapping #hotosm-project-1 buildings"}},
+            {"id": 2, "user": "bob", "uid": 20,
+             "tags": {"comment": "buildings", "hashtags": "#hotosm-project-2;#GEOSM"}},
+            {"id": 3, "user": "carol", "uid": 30,
+             "tags": {"comment": "Cleanup #HOTOSM-project-3", "hashtags": "#hotosm-project-3"}},
+            {"id": 4, "user": "dave", "uid": 40,
+             "tags": {"comment": "drobna poprawa", "hashtags": "#OzonGeo"}},
+        ],
+    )
+
+    osc = osc_factory(
+        "edits.osc",
+        [
+            ("node", {"id": 100, "version": 1, "uid": 10, "user": "alice",
+                      "changeset": 1, "tags": {"amenity": "cafe"}}),
+            ("node", {"id": 101, "version": 1, "uid": 10, "user": "alice",
+                      "changeset": 1, "tags": {}}),
+            ("way", {"id": 200, "version": 1, "uid": 10, "user": "alice",
+                     "changeset": 1, "nodes": [100, 101], "tags": {"highway": "footway"}}),
+            ("node", {"id": 110, "version": 1, "uid": 20, "user": "bob",
+                      "changeset": 2, "tags": {"building": "yes"}}),
+            ("node", {"id": 111, "version": 2, "uid": 20, "user": "bob",
+                      "changeset": 2, "tags": {"building": "yes"}}),
+            ("way", {"id": 210, "version": 0, "uid": 20, "user": "bob",
+                     "changeset": 2, "nodes": [], "tags": {}}),
+            ("relation", {"id": 300, "version": 1, "uid": 30, "user": "carol",
+                          "changeset": 3, "members": [], "tags": {"type": "boundary"}}),
+            ("node", {"id": 120, "version": 1, "uid": 40, "user": "dave",
+                      "changeset": 4, "tags": {"amenity": "bench"}}),
+        ],
+    )
+
+    cs_cfg = {
+        "hashtags": ["#hotosm"], "exact_lookup": False, "changeset_meta": False,
+        "whitelisted_users": [], "geom_filter_wkt": None,
+    }
+    cs_handler = ChangesetHandler(cs_cfg)
+    cs_handler.apply_file(str(cs_xml))
+
+    cs_parquet = tmp_path / "cs_parq"
+    _flush_changesets(cs_handler, cs_parquet)
+    db = duckdb.connect(str(tmp_path / "e2e.duckdb"))
+    create_tables(db)
+    merge_parquet_files(db, cs_parquet, cleanup=False)
+
+    valid = set(list_changesets(db))
+    assert valid == {1, 2, 3}, "dave's #OzonGeo changeset must NOT be in the matched set"
+
+    cf_cfg = dict(changefile_config)
+    cf_cfg["hashtags"] = ["#hotosm"]
+    cf_handler = ChangefileHandler(cf_cfg, sequence_id=1, valid_changesets=valid)
+    cf_handler.apply_file(str(osc))
+
+    cf_parquet = tmp_path / "cf_parq"
+    _flush(cf_handler, cf_parquet, pid=2)
+    merge_parquet_files(db, cf_parquet, cleanup=False)
+
+    rows = user_stats(db)
+    by_user = {r["name"]: r for r in rows}
+
+    assert set(by_user) == {"alice", "bob", "carol"}, (
+        "every matched user must appear; no unmatched user (dave) may leak in"
+    )
+
+    assert by_user["alice"]["changesets"] == 1
+    assert by_user["alice"]["nodes_create"] == 2
+    assert by_user["alice"]["ways_create"] == 1
+    assert by_user["alice"]["poi_create"] == 1
+    assert by_user["alice"]["map_changes"] == 3
+
+    assert by_user["bob"]["changesets"] == 1
+    assert by_user["bob"]["nodes_create"] == 1
+    assert by_user["bob"]["nodes_modify"] == 1
+    assert by_user["bob"]["ways_delete"] == 1
+    assert by_user["bob"]["poi_create"] == 1
+    assert by_user["bob"]["poi_modify"] == 1
+    assert by_user["bob"]["map_changes"] == 3
+
+    assert by_user["carol"]["changesets"] == 1
+    assert by_user["carol"]["rels_create"] == 1
+    assert by_user["carol"]["map_changes"] == 1
+
+    attach_metadata(db, rows)
+    by_user = {r["name"]: r for r in rows}
+    assert any(h.lower() == "#hotosm-project-1" for h in by_user["alice"]["hashtags"])
+    bob_ht = {h.lower() for h in by_user["bob"]["hashtags"]}
+    assert "#hotosm-project-2" in bob_ht
+    assert "#geosm" in bob_ht, "the `hashtags` field's secondary tags must persist for reporting"
+    carol_ht = {h.lower() for h in by_user["carol"]["hashtags"]}
+    assert "#hotosm-project-3" in carol_ht
+    assert len(carol_ht) == 1, (
+        "duplicate hashtag in comment + hashtags field must be deduped case-insensitively"
+    )
+
+
+def test_hashtag_pipeline_drops_unmatched_changeset_elements(tmp_path, osc_factory, changefile_config):
+    """Element edits whose changeset doesn't match the hashtag filter must NOT be counted.
+
+    Direct regression for `_should_collect`: empty `valid_changesets` means the filter
+    matched nothing — drop everything, NOT 'no filter, keep everything'."""
+    osc = osc_factory(
+        "off.osc",
+        [
+            ("node", {"id": 1, "version": 1, "uid": 10, "user": "alice",
+                      "changeset": 999, "tags": {"amenity": "cafe"}}),
+        ],
+    )
+
+    cf_cfg = dict(changefile_config)
+    cf_cfg["hashtags"] = ["#hotosm"]
+    handler = ChangefileHandler(cf_cfg, sequence_id=1, valid_changesets=set())
+    handler.apply_file(str(osc))
+
+    parquet = tmp_path / "parq"
+    _flush(handler, parquet)
+    db = duckdb.connect(":memory:")
+    create_tables(db)
+    merge_parquet_files(db, parquet, cleanup=False)
+
+    assert user_stats(db) == [], "no user may appear when the filter matched zero changesets"
+
+
+def test_hashtag_filter_keeps_changeset_with_no_in_window_edits(tmp_path, changefile_config):
+    """A matched changeset that has zero edits in the time window still belongs in the
+    `changesets` table (so attach_metadata reports it) — but contributes 0 to user_stats."""
+    cs_xml = _write_changeset_xml(
+        tmp_path, "cs_only.osm",
+        [{"id": 7, "user": "eve", "uid": 70,
+          "tags": {"hashtags": "#hotosm-project-7"}}],
+    )
+    cs_cfg = {
+        "hashtags": ["#hotosm"], "exact_lookup": False, "changeset_meta": False,
+        "whitelisted_users": [], "geom_filter_wkt": None,
+    }
+    cs_h = ChangesetHandler(cs_cfg)
+    cs_h.apply_file(str(cs_xml))
+
+    db = duckdb.connect(str(tmp_path / "empty_edits.duckdb"))
+    create_tables(db)
+    cs_parquet = tmp_path / "cs_parq"
+    _flush_changesets(cs_h, cs_parquet)
+    merge_parquet_files(db, cs_parquet, cleanup=False)
+
+    assert set(list_changesets(db)) == {7}
+    # No changefile processed → no rows in changeset_stats → user_stats is empty,
+    # but the changeset metadata persists for downstream reporting.
+    assert user_stats(db) == []
+    cs_count = db.execute("SELECT COUNT(*) FROM changesets").fetchone()[0]
+    assert cs_count == 1

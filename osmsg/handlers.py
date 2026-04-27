@@ -39,13 +39,24 @@ class ChangesetHandler(osmium.SimpleHandler):
                 return
 
         keep = bool(cfg["changeset_meta"] and not cfg["hashtags"])
-        if cfg["hashtags"] and "comment" in c.tags:
-            comment = c.tags["comment"]
+        comment = c.tags.get("comment", "")
+        # OSM changesets carry hashtags in two places: inline in `comment`, and as an
+        # explicit `;`-separated `hashtags` tag (set by JOSM, MapRoulette, the website
+        # editor, etc.). Many editors only populate `hashtags`, leaving the comment
+        # generic ("buildings"); checking only `comment` silently misses those edits.
+        # We also re-extract via HASHTAG_RE rather than splitting on `;` because real
+        # data uses `;`, ` `, or `,` as separators — the regex normalizes all three.
+        hashtags_field = c.tags.get("hashtags", "")
+        inline_tokens = HASHTAG_RE.findall(comment)
+        field_tokens = HASHTAG_RE.findall(hashtags_field)
+        if cfg["hashtags"]:
             if cfg["exact_lookup"]:
-                found = {h.lower() for h in HASHTAG_RE.findall(comment)}
+                found = {h.lower() for h in inline_tokens}
+                found.update(h.lower() for h in field_tokens)
                 keep = any(h.lower() in found for h in cfg["hashtags"])
             else:
-                keep = any(h.lower() in comment.lower() for h in cfg["hashtags"])
+                haystack = (comment + "\n" + hashtags_field).lower()
+                keep = any(h.lower() in haystack for h in cfg["hashtags"])
 
         if keep and cfg["whitelisted_users"]:
             keep = c.user in cfg["whitelisted_users"]
@@ -53,7 +64,14 @@ class ChangesetHandler(osmium.SimpleHandler):
         if not keep:
             return
 
-        hashtags_list = HASHTAG_RE.findall(c.tags.get("comment", ""))
+        # De-duplicate but preserve first-seen order so reports stay stable.
+        hashtags_list: list[str] = []
+        seen: set[str] = set()
+        for tok in inline_tokens + field_tokens:
+            key = tok.lower()
+            if key not in seen:
+                seen.add(key)
+                hashtags_list.append(tok)
         bbox = None
         if c.bounds.valid():
             b = c.bounds
@@ -83,14 +101,15 @@ class ChangefileHandler(osmium.SimpleHandler):
         self.start = config["start_date_utc"]
         self.end = config["end_date_utc"]
         self.seq_id = sequence_id
-        self.valid_changesets = valid_changesets or set()
+        # None == no filter; empty set == filter matched nothing (collect nothing).
+        self.valid_changesets = valid_changesets
 
         self.users: dict[int, User] = {}
         self.stubs: dict[int, Changeset] = {}
         self.stats: dict[int, ChangesetStats] = {}
 
     def _should_collect(self, uname: str, cs_id: int) -> bool:
-        if self.valid_changesets and cs_id not in self.valid_changesets:
+        if self.valid_changesets is not None and cs_id not in self.valid_changesets:
             return False
         whitelist = self.config["whitelisted_users"]
         return not (whitelist and uname not in whitelist)

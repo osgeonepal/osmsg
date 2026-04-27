@@ -28,13 +28,14 @@ def error(message: str) -> None:
 
 @contextmanager
 def progress_bar(total: int, unit: str = "items"):
+    # transient=False keeps a one-line summary so cron logs / file-redirected stdout retain context.
     with Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
         TextColumn("{task.completed}/{task.total} " + unit),
         TimeElapsedColumn(),
         console=console,
-        transient=True,
+        transient=False,
     ) as bar:
         task = bar.add_task("processing", total=total)
 
