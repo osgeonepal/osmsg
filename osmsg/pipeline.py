@@ -267,6 +267,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         if urls:
             cs_dir.mkdir(parents=True, exist_ok=True)
             cs_config = _processing_config(cfg, parquet_dir=cs_dir, geom_wkt=geom_wkt)
+            cs_config["window_start_utc"] = cfg.start_date.astimezone(UTC)
+            cs_config["window_end_utc"] = cfg.end_date.astimezone(UTC)
 
             _download_all(urls, "changeset", max_workers, None, cfg.cache_dir, "changesets")
             _process_all(

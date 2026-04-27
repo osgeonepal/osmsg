@@ -390,42 +390,71 @@ def test_hashtag_pipeline_end_to_end_no_contribution_lost(tmp_path, osc_factory,
         tmp_path,
         "cs.osm",
         [
-            {"id": 1, "user": "alice", "uid": 10,
-             "tags": {"comment": "Mapping #hotosm-project-1 buildings"}},
-            {"id": 2, "user": "bob", "uid": 20,
-             "tags": {"comment": "buildings", "hashtags": "#hotosm-project-2;#GEOSM"}},
-            {"id": 3, "user": "carol", "uid": 30,
-             "tags": {"comment": "Cleanup #HOTOSM-project-3", "hashtags": "#hotosm-project-3"}},
-            {"id": 4, "user": "dave", "uid": 40,
-             "tags": {"comment": "drobna poprawa", "hashtags": "#OzonGeo"}},
+            {"id": 1, "user": "alice", "uid": 10, "tags": {"comment": "Mapping #hotosm-project-1 buildings"}},
+            {
+                "id": 2,
+                "user": "bob",
+                "uid": 20,
+                "tags": {"comment": "buildings", "hashtags": "#hotosm-project-2;#GEOSM"},
+            },
+            {
+                "id": 3,
+                "user": "carol",
+                "uid": 30,
+                "tags": {"comment": "Cleanup #HOTOSM-project-3", "hashtags": "#hotosm-project-3"},
+            },
+            {"id": 4, "user": "dave", "uid": 40, "tags": {"comment": "drobna poprawa", "hashtags": "#OzonGeo"}},
         ],
     )
 
     osc = osc_factory(
         "edits.osc",
         [
-            ("node", {"id": 100, "version": 1, "uid": 10, "user": "alice",
-                      "changeset": 1, "tags": {"amenity": "cafe"}}),
-            ("node", {"id": 101, "version": 1, "uid": 10, "user": "alice",
-                      "changeset": 1, "tags": {}}),
-            ("way", {"id": 200, "version": 1, "uid": 10, "user": "alice",
-                     "changeset": 1, "nodes": [100, 101], "tags": {"highway": "footway"}}),
-            ("node", {"id": 110, "version": 1, "uid": 20, "user": "bob",
-                      "changeset": 2, "tags": {"building": "yes"}}),
-            ("node", {"id": 111, "version": 2, "uid": 20, "user": "bob",
-                      "changeset": 2, "tags": {"building": "yes"}}),
-            ("way", {"id": 210, "version": 0, "uid": 20, "user": "bob",
-                     "changeset": 2, "nodes": [], "tags": {}}),
-            ("relation", {"id": 300, "version": 1, "uid": 30, "user": "carol",
-                          "changeset": 3, "members": [], "tags": {"type": "boundary"}}),
-            ("node", {"id": 120, "version": 1, "uid": 40, "user": "dave",
-                      "changeset": 4, "tags": {"amenity": "bench"}}),
+            (
+                "node",
+                {"id": 100, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {"amenity": "cafe"}},
+            ),
+            ("node", {"id": 101, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {}}),
+            (
+                "way",
+                {
+                    "id": 200,
+                    "version": 1,
+                    "uid": 10,
+                    "user": "alice",
+                    "changeset": 1,
+                    "nodes": [100, 101],
+                    "tags": {"highway": "footway"},
+                },
+            ),
+            ("node", {"id": 110, "version": 1, "uid": 20, "user": "bob", "changeset": 2, "tags": {"building": "yes"}}),
+            ("node", {"id": 111, "version": 2, "uid": 20, "user": "bob", "changeset": 2, "tags": {"building": "yes"}}),
+            ("way", {"id": 210, "version": 0, "uid": 20, "user": "bob", "changeset": 2, "nodes": [], "tags": {}}),
+            (
+                "relation",
+                {
+                    "id": 300,
+                    "version": 1,
+                    "uid": 30,
+                    "user": "carol",
+                    "changeset": 3,
+                    "members": [],
+                    "tags": {"type": "boundary"},
+                },
+            ),
+            (
+                "node",
+                {"id": 120, "version": 1, "uid": 40, "user": "dave", "changeset": 4, "tags": {"amenity": "bench"}},
+            ),
         ],
     )
 
     cs_cfg = {
-        "hashtags": ["#hotosm"], "exact_lookup": False, "changeset_meta": False,
-        "whitelisted_users": [], "geom_filter_wkt": None,
+        "hashtags": ["#hotosm"],
+        "exact_lookup": False,
+        "changeset_meta": False,
+        "whitelisted_users": [],
+        "geom_filter_wkt": None,
     }
     cs_handler = ChangesetHandler(cs_cfg)
     cs_handler.apply_file(str(cs_xml))
@@ -481,9 +510,7 @@ def test_hashtag_pipeline_end_to_end_no_contribution_lost(tmp_path, osc_factory,
     assert "#geosm" in bob_ht, "the `hashtags` field's secondary tags must persist for reporting"
     carol_ht = {h.lower() for h in by_user["carol"]["hashtags"]}
     assert "#hotosm-project-3" in carol_ht
-    assert len(carol_ht) == 1, (
-        "duplicate hashtag in comment + hashtags field must be deduped case-insensitively"
-    )
+    assert len(carol_ht) == 1, "duplicate hashtag in comment + hashtags field must be deduped case-insensitively"
 
 
 def test_hashtag_pipeline_drops_unmatched_changeset_elements(tmp_path, osc_factory, changefile_config):
@@ -494,8 +521,10 @@ def test_hashtag_pipeline_drops_unmatched_changeset_elements(tmp_path, osc_facto
     osc = osc_factory(
         "off.osc",
         [
-            ("node", {"id": 1, "version": 1, "uid": 10, "user": "alice",
-                      "changeset": 999, "tags": {"amenity": "cafe"}}),
+            (
+                "node",
+                {"id": 1, "version": 1, "uid": 10, "user": "alice", "changeset": 999, "tags": {"amenity": "cafe"}},
+            ),
         ],
     )
 
@@ -517,13 +546,16 @@ def test_hashtag_filter_keeps_changeset_with_no_in_window_edits(tmp_path, change
     """A matched changeset that has zero edits in the time window still belongs in the
     `changesets` table (so attach_metadata reports it) — but contributes 0 to user_stats."""
     cs_xml = _write_changeset_xml(
-        tmp_path, "cs_only.osm",
-        [{"id": 7, "user": "eve", "uid": 70,
-          "tags": {"hashtags": "#hotosm-project-7"}}],
+        tmp_path,
+        "cs_only.osm",
+        [{"id": 7, "user": "eve", "uid": 70, "tags": {"hashtags": "#hotosm-project-7"}}],
     )
     cs_cfg = {
-        "hashtags": ["#hotosm"], "exact_lookup": False, "changeset_meta": False,
-        "whitelisted_users": [], "geom_filter_wkt": None,
+        "hashtags": ["#hotosm"],
+        "exact_lookup": False,
+        "changeset_meta": False,
+        "whitelisted_users": [],
+        "geom_filter_wkt": None,
     }
     cs_h = ChangesetHandler(cs_cfg)
     cs_h.apply_file(str(cs_xml))

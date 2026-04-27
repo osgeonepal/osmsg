@@ -10,18 +10,27 @@ from osmsg.handlers import ChangefileHandler, ChangesetHandler
 
 
 def _write_changeset_xml(tmp_path, name, changesets):
-    """Hand-written changeset XML — osmium's SimpleWriter doesn't support changesets."""
+    """Hand-written changeset XML — osmium's SimpleWriter doesn't support changesets.
+
+    Pass ``open=True`` to emit a still-open entry (no ``closed_at`` attribute) — that
+    matches what OSM replication serializes for changesets that haven't closed yet,
+    and is what osmium turns into ``closed_at = 1970-01-01`` (the epoch sentinel).
+    """
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<osm version="0.6">',
     ]
     for cs in changesets:
+        is_open = cs.get("open", False)
         attrs = (
             f'id="{cs["id"]}" created_at="{cs.get("created_at", "2026-04-27T20:00:00Z")}" '
-            f'closed_at="{cs.get("closed_at", "2026-04-27T21:00:00Z")}" open="false" '
             f'num_changes="{cs.get("num_changes", 1)}" user="{cs.get("user", "alice")}" '
             f'uid="{cs.get("uid", 10)}" comments_count="0"'
         )
+        if is_open:
+            attrs += ' open="true"'
+        else:
+            attrs = f'{attrs} closed_at="{cs.get("closed_at", "2026-04-27T21:00:00Z")}" open="false"'
         parts.append(f"  <changeset {attrs}>")
         for k, v in cs.get("tags", {}).items():
             parts.append(f'    <tag k="{k}" v="{v}"/>')
@@ -46,7 +55,8 @@ def changeset_config():
 def test_changeset_handler_matches_hashtag_in_comment(tmp_path, changeset_config):
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_comment.osm",
+        tmp_path,
+        "cs_comment.osm",
         [{"id": 1, "tags": {"comment": "Mapping #hotosm-project-99 buildings"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -60,7 +70,8 @@ def test_changeset_handler_matches_hashtag_in_hashtags_field(tmp_path, changeset
     with hashtags='#hotosm-project-99;#GEOSM') used to be silently dropped."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_field.osm",
+        tmp_path,
+        "cs_field.osm",
         [{"id": 1, "tags": {"comment": "buildings", "hashtags": "#hotosm-project-99;#GEOSM"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -75,7 +86,8 @@ def test_changeset_handler_exact_lookup_uses_hashtags_field(tmp_path, changeset_
     changeset_config["hashtags"] = ["#GEOSM"]
     changeset_config["exact_lookup"] = True
     p = _write_changeset_xml(
-        tmp_path, "cs_exact.osm",
+        tmp_path,
+        "cs_exact.osm",
         [
             {"id": 1, "tags": {"comment": "buildings", "hashtags": "#GEOSM;#hotosm-project-99"}},
             # No exact match: comment has '#GEOSMfoo' (no whole-word #GEOSM), hashtags absent.
@@ -90,7 +102,8 @@ def test_changeset_handler_exact_lookup_uses_hashtags_field(tmp_path, changeset_
 def test_changeset_handler_drops_when_neither_field_matches(tmp_path, changeset_config):
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_nomatch.osm",
+        tmp_path,
+        "cs_nomatch.osm",
         [{"id": 1, "tags": {"comment": "buildings", "hashtags": "#OzonGeo"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -111,7 +124,8 @@ def test_changeset_handler_handles_empty_tag_values(tmp_path, changeset_config):
     """Empty `comment` and empty `hashtags` values must not match a non-empty filter."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_empty.osm",
+        tmp_path,
+        "cs_empty.osm",
         [{"id": 1, "tags": {"comment": "", "hashtags": ""}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -122,21 +136,20 @@ def test_changeset_handler_handles_empty_tag_values(tmp_path, changeset_config):
 @pytest.mark.parametrize(
     "field_value,expected_tokens",
     [
-        ("#hotosm;#map", ["#hotosm", "#map"]),               # canonical
-        ("  ;  #hotosm  ;;  #map  ", ["#hotosm", "#map"]),   # whitespace + empty splits
-        ("#hotosm #map", ["#hotosm", "#map"]),               # space-separated (real-world)
-        ("#hotosm,#map", ["#hotosm", "#map"]),               # comma-separated (real-world)
+        ("#hotosm;#map", ["#hotosm", "#map"]),  # canonical
+        ("  ;  #hotosm  ;;  #map  ", ["#hotosm", "#map"]),  # whitespace + empty splits
+        ("#hotosm #map", ["#hotosm", "#map"]),  # space-separated (real-world)
+        ("#hotosm,#map", ["#hotosm", "#map"]),  # comma-separated (real-world)
     ],
 )
-def test_changeset_handler_tokenizes_hashtags_field_robustly(
-    tmp_path, changeset_config, field_value, expected_tokens
-):
+def test_changeset_handler_tokenizes_hashtags_field_robustly(tmp_path, changeset_config, field_value, expected_tokens):
     """The `hashtags` field is canonically `;`-separated, but real data also uses
     spaces and commas. Tokenization must extract `#word` regardless of separator
     so we don't store malformed tokens like `'#hotosm #map'` or miss matches."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_seps.osm",
+        tmp_path,
+        "cs_seps.osm",
         [{"id": 1, "tags": {"comment": "x", "hashtags": field_value}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -149,7 +162,8 @@ def test_changeset_handler_dedup_case_insensitive_preserves_first(tmp_path, chan
     """Same hashtag in both fields: stored once, with the case that appeared first (comment)."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_dup.osm",
+        tmp_path,
+        "cs_dup.osm",
         [{"id": 1, "tags": {"comment": "Mapping #HotOSM today", "hashtags": "#hotosm"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -161,7 +175,8 @@ def test_changeset_handler_substring_matches_partial_token(tmp_path, changeset_c
     """`--hashtags hotosm` (substring) must match `#hotosm-project-99`."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_partial.osm",
+        tmp_path,
+        "cs_partial.osm",
         [{"id": 1, "tags": {"comment": "x", "hashtags": "#hotosm-project-99"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -174,10 +189,11 @@ def test_changeset_handler_exact_lookup_rejects_partial_token(tmp_path, changese
     changeset_config["hashtags"] = ["#hotosm"]
     changeset_config["exact_lookup"] = True
     p = _write_changeset_xml(
-        tmp_path, "cs_partial_exact.osm",
+        tmp_path,
+        "cs_partial_exact.osm",
         [
             {"id": 1, "tags": {"comment": "x", "hashtags": "#hotosmgermany"}},  # NOT a match
-            {"id": 2, "tags": {"comment": "x", "hashtags": "#hotosm"}},          # exact match
+            {"id": 2, "tags": {"comment": "x", "hashtags": "#hotosm"}},  # exact match
         ],
     )
     h = ChangesetHandler(changeset_config)
@@ -189,7 +205,8 @@ def test_changeset_handler_filter_is_case_insensitive(tmp_path, changeset_config
     """Users pass `--hashtags HOTOSM` or `--hashtags hotosm` interchangeably."""
     changeset_config["hashtags"] = ["#HOTOSM"]
     p = _write_changeset_xml(
-        tmp_path, "cs_case.osm",
+        tmp_path,
+        "cs_case.osm",
         [{"id": 1, "tags": {"comment": "x", "hashtags": "#hotosm-project-99"}}],
     )
     h = ChangesetHandler(changeset_config)
@@ -197,13 +214,12 @@ def test_changeset_handler_filter_is_case_insensitive(tmp_path, changeset_config
     assert 1 in h.changesets
 
 
-def test_changeset_handler_changeset_meta_collects_all_when_no_hashtags_filter(
-    tmp_path, changeset_config
-):
+def test_changeset_handler_changeset_meta_collects_all_when_no_hashtags_filter(tmp_path, changeset_config):
     """`--changeset` with no hashtag filter: every changeset is recorded."""
     changeset_config["hashtags"] = None
     p = _write_changeset_xml(
-        tmp_path, "cs_all.osm",
+        tmp_path,
+        "cs_all.osm",
         [
             {"id": 1, "tags": {"comment": "buildings"}},
             {"id": 2, "tags": {}},
@@ -220,7 +236,8 @@ def test_changeset_handler_user_whitelist_intersects_hashtag_filter(tmp_path, ch
     changeset_config["hashtags"] = ["#hotosm"]
     changeset_config["whitelisted_users"] = ["alice"]
     p = _write_changeset_xml(
-        tmp_path, "cs_whitelist.osm",
+        tmp_path,
+        "cs_whitelist.osm",
         [
             {"id": 1, "user": "alice", "uid": 10, "tags": {"hashtags": "#hotosm-foo"}},
             {"id": 2, "user": "bob", "uid": 20, "tags": {"hashtags": "#hotosm-foo"}},
@@ -236,14 +253,16 @@ def test_changeset_handler_stores_editor_and_bbox(tmp_path, changeset_config):
     """`created_by` becomes `editor`; min_*/max_* become bbox."""
     changeset_config["hashtags"] = ["#hotosm"]
     parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6">',
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<osm version="0.6">',
         '  <changeset id="1" created_at="2026-04-27T20:00:00Z" closed_at="2026-04-27T21:00:00Z" '
         'open="false" num_changes="1" user="alice" uid="10" comments_count="0" '
         'min_lat="10.5" max_lat="11.5" min_lon="20.5" max_lon="21.5">',
         '    <tag k="comment" v="x"/>',
         '    <tag k="hashtags" v="#hotosm-project-99"/>',
         '    <tag k="created_by" v="JOSM/1.5"/>',
-        '  </changeset>', '</osm>',
+        "  </changeset>",
+        "</osm>",
     ]
     p = tmp_path / "cs_editor.osm"
     p.write_text("\n".join(parts), encoding="utf-8")
@@ -259,7 +278,8 @@ def test_changeset_handler_first_seen_wins_on_duplicate_ids(tmp_path, changeset_
     """Same changeset id appearing twice (e.g. across two replication files) is recorded once."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
-        tmp_path, "cs_dup_ids.osm",
+        tmp_path,
+        "cs_dup_ids.osm",
         [
             {"id": 1, "tags": {"hashtags": "#hotosm-foo"}, "user": "alice", "uid": 10},
             {"id": 1, "tags": {"hashtags": "#hotosm-bar"}, "user": "alice", "uid": 10},
@@ -270,11 +290,127 @@ def test_changeset_handler_first_seen_wins_on_duplicate_ids(tmp_path, changeset_
     assert h.changesets[1].hashtags == ["#hotosm-foo"]
 
 
+def test_changeset_handler_window_filter_drops_padding(tmp_path, changeset_config):
+    """Replication padding (~60 min on each side) drags in adjacent-window changesets.
+    With window_start_utc/window_end_utc set, those must be dropped so attach_metadata
+    doesn't leak hashtags from outside the requested window onto in-window users."""
+    changeset_config["hashtags"] = ["#hotosm"]
+    changeset_config["window_start_utc"] = dt.datetime(2026, 4, 27, 21, 4, tzinfo=dt.UTC)
+    changeset_config["window_end_utc"] = dt.datetime(2026, 4, 27, 21, 54, tzinfo=dt.UTC)
+
+    p = _write_changeset_xml(
+        tmp_path,
+        "cs_window.osm",
+        [
+            # closed BEFORE window → drop
+            {
+                "id": 1,
+                "created_at": "2026-04-27T20:00:00Z",
+                "closed_at": "2026-04-27T20:30:00Z",
+                "tags": {"hashtags": "#hotosm-pre"},
+            },
+            # closed AT window start → drop (closed_at <= start)
+            {
+                "id": 2,
+                "created_at": "2026-04-27T20:30:00Z",
+                "closed_at": "2026-04-27T21:04:00Z",
+                "tags": {"hashtags": "#hotosm-edge1"},
+            },
+            # spans window start → KEEP (overlaps window)
+            {
+                "id": 3,
+                "created_at": "2026-04-27T20:30:00Z",
+                "closed_at": "2026-04-27T21:30:00Z",
+                "tags": {"hashtags": "#hotosm-spans-start"},
+            },
+            # entirely within window → KEEP
+            {
+                "id": 4,
+                "created_at": "2026-04-27T21:10:00Z",
+                "closed_at": "2026-04-27T21:20:00Z",
+                "tags": {"hashtags": "#hotosm-inside"},
+            },
+            # spans window end → KEEP
+            {
+                "id": 5,
+                "created_at": "2026-04-27T21:50:00Z",
+                "closed_at": "2026-04-27T22:10:00Z",
+                "tags": {"hashtags": "#hotosm-spans-end"},
+            },
+            # created AT window end → drop (created >= end)
+            {
+                "id": 6,
+                "created_at": "2026-04-27T21:54:00Z",
+                "closed_at": "2026-04-27T22:10:00Z",
+                "tags": {"hashtags": "#hotosm-edge2"},
+            },
+            # entirely after window → drop
+            {
+                "id": 7,
+                "created_at": "2026-04-27T22:10:00Z",
+                "closed_at": "2026-04-27T22:30:00Z",
+                "tags": {"hashtags": "#hotosm-post"},
+            },
+        ],
+    )
+    h = ChangesetHandler(changeset_config)
+    h.apply_file(str(p))
+    assert set(h.changesets.keys()) == {3, 4, 5}
+
+
+def test_changeset_handler_window_filter_keeps_still_open_changesets(tmp_path, changeset_config):
+    """Regression: a changeset that is still open at replication-snapshot time has no
+    `closed_at` attribute, which osmium surfaces as `closed_at = 1970-01-01`. A naive
+    `closed_at <= window_start` check drops it — but its edits could still land in
+    the window. Gate the check on `c.open` so still-open changesets are kept whenever
+    `created_at < window_end`."""
+    changeset_config["hashtags"] = ["#hotosm"]
+    changeset_config["window_start_utc"] = dt.datetime(2026, 4, 27, 21, 4, tzinfo=dt.UTC)
+    changeset_config["window_end_utc"] = dt.datetime(2026, 4, 27, 21, 54, tzinfo=dt.UTC)
+
+    p = _write_changeset_xml(
+        tmp_path,
+        "cs_open.osm",
+        [
+            # Created in window, still open → KEEP (edits could be landing now)
+            {"id": 1, "created_at": "2026-04-27T21:50:00Z", "open": True, "tags": {"hashtags": "#hotosm-still-open"}},
+            # Created before window, still open → KEEP (could have in-window edits)
+            {"id": 2, "created_at": "2026-04-27T21:00:00Z", "open": True, "tags": {"hashtags": "#hotosm-pre-open"}},
+            # Created after window, still open → drop (no possible in-window edits)
+            {"id": 3, "created_at": "2026-04-27T22:00:00Z", "open": True, "tags": {"hashtags": "#hotosm-post-open"}},
+        ],
+    )
+    h = ChangesetHandler(changeset_config)
+    h.apply_file(str(p))
+    assert set(h.changesets.keys()) == {1, 2}
+
+
+def test_changeset_handler_window_filter_absent_keeps_everything(tmp_path, changeset_config):
+    """No window_start_utc/window_end_utc → no time filter (e.g. unit-test fixtures)."""
+    changeset_config["hashtags"] = ["#hotosm"]
+    p = _write_changeset_xml(
+        tmp_path,
+        "cs_no_window.osm",
+        [
+            {
+                "id": 1,
+                "created_at": "1999-01-01T00:00:00Z",
+                "closed_at": "1999-01-01T00:01:00Z",
+                "tags": {"hashtags": "#hotosm-foo"},
+            }
+        ],
+    )
+    h = ChangesetHandler(changeset_config)
+    h.apply_file(str(p))
+    assert 1 in h.changesets
+
+
 def test_changeset_handler_multiple_filters_or_logic(tmp_path, changeset_config):
     """Multiple `--hashtags` values: a changeset matching ANY of them is kept."""
     changeset_config["hashtags"] = ["#hotosm", "#mapathon"]
     p = _write_changeset_xml(
-        tmp_path, "cs_multi.osm",
+        tmp_path,
+        "cs_multi.osm",
         [
             {"id": 1, "tags": {"hashtags": "#hotosm-foo"}},
             {"id": 2, "tags": {"comment": "Weekend #mapathon"}},

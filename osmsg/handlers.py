@@ -33,19 +33,34 @@ class ChangesetHandler(osmium.SimpleHandler):
             return
         cfg = self.config
 
+        # Drop padding-pulled changesets that don't overlap the window — otherwise
+        # attach_metadata leaks their hashtags onto users with in-window edits.
+        # `c.open` gate is required: osmium uses 1970 as the closed_at sentinel.
+        start = cfg.get("window_start_utc")
+        end = cfg.get("window_end_utc")
+        if start is not None and end is not None:
+            created = c.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=dt.UTC)
+            if created >= end:
+                return
+            if not c.open:
+                closed = c.closed_at
+                if closed.tzinfo is None:
+                    closed = closed.replace(tzinfo=dt.UTC)
+                if closed <= start:
+                    return
+
         if self._geom is not None:
             centroid_xy = bbox_centroid(c.bounds)
             if centroid_xy is None or not self._geom.contains(Point(*centroid_xy)):
                 return
 
         keep = bool(cfg["changeset_meta"] and not cfg["hashtags"])
+        # Some editors only fill the `hashtags` tag (comment stays generic); checking
+        # comment alone silently drops those. Tokenize via regex on both — real data
+        # mixes `;`, space, and comma as separators inside `hashtags`.
         comment = c.tags.get("comment", "")
-        # OSM changesets carry hashtags in two places: inline in `comment`, and as an
-        # explicit `;`-separated `hashtags` tag (set by JOSM, MapRoulette, the website
-        # editor, etc.). Many editors only populate `hashtags`, leaving the comment
-        # generic ("buildings"); checking only `comment` silently misses those edits.
-        # We also re-extract via HASHTAG_RE rather than splitting on `;` because real
-        # data uses `;`, ` `, or `,` as separators — the regex normalizes all three.
         hashtags_field = c.tags.get("hashtags", "")
         inline_tokens = HASHTAG_RE.findall(comment)
         field_tokens = HASHTAG_RE.findall(hashtags_field)
@@ -64,7 +79,6 @@ class ChangesetHandler(osmium.SimpleHandler):
         if not keep:
             return
 
-        # De-duplicate but preserve first-seen order so reports stay stable.
         hashtags_list: list[str] = []
         seen: set[str] = set()
         for tok in inline_tokens + field_tokens:
