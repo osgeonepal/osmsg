@@ -56,15 +56,11 @@ CREATE TABLE IF NOT EXISTS state (
 
 
 def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
-    """Push every osmsg table from the active DuckDB into the target Postgres DSN.
-
-    DSN format follows libpq, e.g.::
-
-        host=localhost dbname=osmsg user=postgres password=...
-    """
+    """Push every osmsg table into the libpq DSN target. DSN must be trusted (ATTACH interpolation)."""
     conn.execute("INSTALL postgres")
     conn.execute("LOAD postgres")
-    conn.execute(f"ATTACH '{dsn}' AS pg_target (TYPE postgres)")
+    safe_dsn = dsn.replace("'", "''")
+    conn.execute(f"ATTACH '{safe_dsn}' AS pg_target (TYPE postgres)")
     try:
         for stmt in PG_SCHEMA.strip().split(";"):
             stmt = stmt.strip()

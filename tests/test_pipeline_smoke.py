@@ -25,6 +25,13 @@ def test_normalize_urls_dedupes():
     assert len(cfg.urls) == 1
 
 
+def test_normalize_urls_preserves_order():
+    """Order matters: cfg.urls[0] used to be the implicit resume key. Set comprehension was non-deterministic."""
+    cfg = RunConfig(urls=["https://example.com/zebra", "https://example.com/alpha", "https://example.com/zebra"])
+    _normalize_urls(cfg)
+    assert cfg.urls == ["https://example.com/zebra", "https://example.com/alpha"]
+
+
 def test_run_config_defaults_to_parquet():
     cfg = RunConfig()
     assert cfg.formats == ["parquet"]

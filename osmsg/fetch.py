@@ -4,6 +4,7 @@ when the decompressed file is already on disk."""
 from __future__ import annotations
 
 import gzip
+import os
 import shutil
 from pathlib import Path
 
@@ -20,24 +21,29 @@ def file_path_for(url: str, mode: str, cache_dir: Path = DEFAULT_CACHE_DIR) -> P
 def download_osm_file(
     url: str, mode: str = "changefiles", cookie: str | None = None, cache_dir: Path = DEFAULT_CACHE_DIR
 ) -> Path:
-    """Fetch a `.osc.gz` / `.osm.gz`, decompress, return the decompressed path.
-
-    If the decompressed file already exists, it's returned as-is (offline-friendly).
-    """
-    gz_path = file_path_for(url, mode, cache_dir)
-    raw_path = gz_path.with_suffix("")
+    """Stream `.osc.gz` / `.osm.gz` to disk, decompress, return path. Cached final path short-circuits."""
+    raw_path = file_path_for(url, mode, cache_dir).with_suffix("")
 
     if raw_path.exists():
         return raw_path
 
-    if not gz_path.exists():
-        headers = {"Cookie": cookie} if cookie and "geofabrik" in url.lower() else None
-        r = session.get(url, headers=headers)
-        r.raise_for_status()
-        gz_path.parent.mkdir(parents=True, exist_ok=True)
-        gz_path.write_bytes(r.content)
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with gzip.open(gz_path, "rb") as src, raw_path.open("wb") as dst:
-        shutil.copyfileobj(src, dst)
-    gz_path.unlink(missing_ok=True)
+    partial = raw_path.with_suffix(raw_path.suffix + ".partial")
+    if partial.exists():
+        partial.unlink()
+
+    headers = {"Cookie": cookie} if cookie and "geofabrik" in url.lower() else None
+    with session.get(url, headers=headers, stream=True) as r:
+        r.raise_for_status()
+        # decode_content=True unwraps any transport gzip so our GzipFile only sees file-level framing.
+        r.raw.decode_content = True
+        try:
+            with gzip.GzipFile(fileobj=r.raw) as src, partial.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
+
+    os.replace(partial, raw_path)
     return raw_path

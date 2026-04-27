@@ -5,24 +5,38 @@ Mirrors https://github.com/geofabrik/sendfile_osm_oauth_protector
 
 from __future__ import annotations
 
-import re
 import urllib.parse
+from html.parser import HTMLParser
 
-import requests
-
+from ._http import make_session
 from ._http import session as shared_session
 from .exceptions import GeofabrikAuthError
 
 DEFAULT_OSM_HOST = "https://www.openstreetmap.org"
 DEFAULT_CONSUMER_URL = "https://osm-internal.download.geofabrik.de/get_cookie"
-CSRF_RE = re.compile(r'name="csrf-token"\s+content="([^"]+)"')
+
+
+class _CsrfFinder(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.token: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "meta" or self.token is not None:
+            return
+        a = dict(attrs)
+        if a.get("name") == "csrf-token":
+            content = a.get("content")
+            if content:
+                self.token = content
 
 
 def _csrf(html: str) -> str:
-    m = CSRF_RE.search(html)
-    if m is None:
+    parser = _CsrfFinder()
+    parser.feed(html)
+    if parser.token is None:
         raise GeofabrikAuthError("authenticity_token not found in OSM response")
-    return m.group(1)
+    return parser.token
 
 
 def get_geofabrik_cookie(
@@ -46,8 +60,7 @@ def get_geofabrik_cookie(
     except KeyError as exc:
         raise GeofabrikAuthError(f"missing field in authorization response: {exc}") from exc
 
-    s = requests.Session()
-    s.headers.update(shared_session.headers)
+    s = make_session()
 
     r = s.get(f"{osm_host}/login?cookie_test=true", timeout=30)
     if r.status_code != 200:

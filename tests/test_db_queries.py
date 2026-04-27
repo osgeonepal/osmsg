@@ -6,7 +6,16 @@ import json
 
 import pytest
 
+from osmsg.db.ingest import _sql_escape
 from osmsg.db.queries import attach_metadata, attach_tag_stats, daily_summary, user_stats
+
+
+def test_sql_escape_doubles_single_quotes():
+    """Path-quote helper must not let single quotes break out of a SQL string literal."""
+    assert _sql_escape("a'b") == "a''b"
+    assert _sql_escape("no quotes") == "no quotes"
+    assert _sql_escape("'") == "''"
+    assert _sql_escape("''") == "''''"
 
 
 @pytest.fixture

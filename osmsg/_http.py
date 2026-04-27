@@ -22,7 +22,8 @@ class _TimeoutSession(requests.Session):
         return super().request(method, url, *args, **kwargs)
 
 
-def _build_session() -> requests.Session:
+def make_session() -> requests.Session:
+    """Fresh session with the standard timeout + retry policy (use when a flow needs its own cookie jar)."""
     s = _TimeoutSession()
     retry = Retry(
         total=5,
@@ -37,4 +38,4 @@ def _build_session() -> requests.Session:
     return s
 
 
-session = _build_session()
+session = make_session()

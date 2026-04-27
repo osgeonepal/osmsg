@@ -90,11 +90,10 @@ class ChangefileHandler(osmium.SimpleHandler):
         self.stats: dict[int, ChangesetStats] = {}
 
     def _should_collect(self, uname: str, cs_id: int) -> bool:
-        if self.valid_changesets:
-            return cs_id in self.valid_changesets
-        if self.config["whitelisted_users"]:
-            return uname in self.config["whitelisted_users"]
-        return True
+        if self.valid_changesets and cs_id not in self.valid_changesets:
+            return False
+        whitelist = self.config["whitelisted_users"]
+        return not (whitelist and uname not in whitelist)
 
     def _record(self, uid: int, uname: str, cs_id: int) -> None:
         if uid not in self.users:

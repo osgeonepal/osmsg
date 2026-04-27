@@ -50,6 +50,7 @@ def changefile_download_urls(
 
     start_seq_time = seq_to_timestamp(repl.get_state_url(seq))
     if start_date > start_seq_time:
+        # Pad backwards by one window so we never miss a diff straddling the boundary.
         if "minute" in base_url:
             seq = (seq + int((start_date - start_seq_time).total_seconds() / 60)) - 60
         elif "hour" in base_url:
@@ -70,6 +71,7 @@ def changefile_download_urls(
         if end_seq is None:
             raise OsmsgError(f"Could not resolve end_date {end_date}")
         last_seq = end_seq
+        # Pad forwards so the last requested timestamp is fully covered by the diffs we fetch.
         if "minute" in base_url:
             adjust = int((seq_to_timestamp(repl.get_state_url(end_seq)) - end_date).total_seconds() / 60)
             last_seq = last_seq + adjust + 60

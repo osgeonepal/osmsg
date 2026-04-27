@@ -49,8 +49,10 @@ def process_changeset(url: str) -> None:
 
     raw_path = file_path_for(url, "changeset", Path(cfg["cache_dir"])).with_suffix("")
     handler = ChangesetHandler(cfg)
-    with suppress(Exception):
+    try:
         handler.apply_file(str(raw_path))
+    except Exception as exc:
+        _warn(f"changeset file may be corrupt ({url}): {exc}")
 
     flush_rows_to_parquet(
         parquet_dir=Path(cfg["parquet_dir"]),
@@ -65,18 +67,12 @@ def process_changeset(url: str) -> None:
             raw_path.unlink()
 
 
-def process_changefile(url: str) -> None:
+def process_changefile(url: str, sequence_id: int) -> None:
     cfg = _CF_CONFIG
     if cfg is None:
         raise RuntimeError("init_changefile_worker must run first")
 
     raw_path = file_path_for(url, "changefiles", Path(cfg["cache_dir"])).with_suffix("")
-
-    try:
-        sequence_id = int("".join(url.split("/")[-3:]).split(".")[0])
-    except (ValueError, IndexError):
-        _warn(f"could not parse sequence id from URL: {url}")
-        return
 
     handler = ChangefileHandler(cfg, sequence_id, _VALID_CHANGESETS)
     try:
@@ -85,7 +81,7 @@ def process_changefile(url: str) -> None:
         else:
             handler.apply_file(str(raw_path))
     except Exception as exc:
-        _warn(f"file may be corrupt ({url}): {exc}")
+        _warn(f"changefile may be corrupt ({url}): {exc}")
 
     flush_rows_to_parquet(
         parquet_dir=Path(cfg["parquet_dir"]),

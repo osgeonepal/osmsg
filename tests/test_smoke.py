@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from osmsg.__version__ import __version__
+from osmsg.exceptions import NoDataFoundError, OsmsgError
 
 
 def test_version_is_populated():
@@ -27,3 +28,9 @@ def test_package_modules_import():
         ui,
         workers,
     )
+
+
+def test_no_data_found_is_not_osmsg_error():
+    """Catching OsmsgError must not silently swallow 'no data' (an info condition, not a failure)."""
+    assert not issubclass(NoDataFoundError, OsmsgError)
+    assert issubclass(NoDataFoundError, Exception)

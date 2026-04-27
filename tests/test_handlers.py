@@ -191,6 +191,28 @@ def test_changefile_handler_valid_changesets_filter(osc_factory, changefile_conf
     assert set(handler.stats.keys()) == {1}
 
 
+def test_changefile_handler_hashtags_and_users_intersect(osc_factory, changefile_config):
+    """--hashtags + --users → BOTH conditions must hold (regression: the user filter used to be silently ignored)."""
+    changefile_config["whitelisted_users"] = ["alice"]
+    osc = osc_factory(
+        "intersect.osc",
+        [
+            # changeset 1 by alice — kept (in valid_changesets AND in whitelist)
+            ("node", {"id": 1, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {"amenity": "cafe"}}),
+            # changeset 1 by bob — dropped (in valid_changesets but NOT in whitelist)
+            ("node", {"id": 2, "version": 1, "uid": 20, "user": "bob", "changeset": 1, "tags": {"amenity": "bar"}}),
+            # changeset 3 by alice — dropped (in whitelist but NOT in valid_changesets)
+            ("node", {"id": 3, "version": 1, "uid": 10, "user": "alice", "changeset": 3, "tags": {"amenity": "shop"}}),
+        ],
+    )
+    handler = ChangefileHandler(changefile_config, sequence_id=1, valid_changesets={1, 2})
+    handler.apply_file(str(osc))
+    assert set(handler.stats.keys()) == {1}
+    # Only alice's row was recorded under changeset 1.
+    assert handler.stats[1].uid == 10
+    assert {u.username for u in handler.users.values()} == {"alice"}
+
+
 @pytest.mark.parametrize("version,expected_bucket", [(1, "c"), (2, "m"), (0, "d")])
 def test_changefile_handler_action_dispatch(osc_factory, changefile_config, version, expected_bucket):
     """version=1 → CREATE, >1 → MODIFY, 0 → DELETE."""

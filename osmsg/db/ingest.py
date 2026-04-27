@@ -94,6 +94,10 @@ def flush_rows_to_parquet(
     }
 
 
+def _sql_escape(value: str) -> str:
+    return value.replace("'", "''")
+
+
 def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, cleanup: bool = True) -> None:
     parquet_dir = Path(parquet_dir)
     if not parquet_dir.exists():
@@ -102,7 +106,8 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
     _quarantine_corrupt(parquet_dir)
 
     def pattern(name: str) -> str:
-        return (parquet_dir / f"temp_*_{name}_*.parquet").as_posix()
+        # read_parquet() takes a literal — escape so quoted paths can't break out.
+        return _sql_escape((parquet_dir / f"temp_*_{name}_*.parquet").as_posix())
 
     conn.execute("BEGIN")
     try:

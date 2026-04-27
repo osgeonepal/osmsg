@@ -124,7 +124,10 @@ def main(
         list[str] | None,
         typer.Option("--url", help="Replication URL(s). Shortcuts: minute, hour, day."),
     ] = None,
-    hashtags: Annotated[list[str] | None, typer.Option("--hashtags")] = None,
+    hashtags: Annotated[
+        list[str] | None,
+        typer.Option("--hashtags", help="Hashtag filter (substring by default; whole-word with --exact-lookup)."),
+    ] = None,
     tags: Annotated[list[str] | None, typer.Option("--tags", help="Per-key counts (e.g. building highway).")] = None,
     length: Annotated[list[str] | None, typer.Option("--length", help="Length-in-m for tag keys.")] = None,
     users: Annotated[
@@ -150,7 +153,13 @@ def main(
     cache_dir: Annotated[
         Path, typer.Option("--cache-dir", help="Cache dir for downloaded OSM files.")
     ] = DEFAULT_CACHE_DIR,
-    delete_temp: Annotated[bool, typer.Option("--delete-temp", help="Remove cache_dir after processing.")] = False,
+    delete_temp: Annotated[
+        bool,
+        typer.Option(
+            "--delete-temp",
+            help="Remove this run's downloaded files + scratch dirs after processing (cache_dir itself is kept).",
+        ),
+    ] = False,
     username: Annotated[str | None, typer.Option(help="OSM username. Else $OSM_USERNAME, then prompt.")] = None,
     password_stdin: Annotated[
         bool,
@@ -166,6 +175,9 @@ def main(
         formats = [Format.parquet]
     if sum(1 for x in (start, last, days) if x) > 1:
         error("--start, --last, and --days are mutually exclusive — pick one.")
+        raise typer.Exit(code=2)
+    if Format.psql in formats and not psql_dsn:
+        error("-f psql requires --psql-dsn (libpq connection string, e.g. 'host=localhost dbname=osm user=osm').")
         raise typer.Exit(code=2)
     if tm_stats and not hashtags:
         warn("--tm-stats has no effect without --hashtags; TM enrichment keys off hashtags.")

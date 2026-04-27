@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import datetime as dt
 import os
 import shutil
@@ -69,7 +70,8 @@ def _normalize_urls(cfg: RunConfig) -> None:
     if cfg.countries:
         cfg.urls = _resolve_country_urls(cfg.countries)
         return
-    cfg.urls = list({resolve_url(u) for u in cfg.urls})
+    # Order-preserving dedupe: cfg.urls[0] is load-bearing for resume.
+    cfg.urls = list(dict.fromkeys(resolve_url(u) for u in cfg.urls))
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
@@ -132,14 +134,24 @@ def _download_all(
             advance()
 
 
-def _process_all(urls: list[str], *, target, initializer, init_args, chunksize: int, label: str, workers: int) -> None:
+def _process_all(
+    items: list,
+    *,
+    target,
+    initializer,
+    init_args,
+    chunksize: int,
+    label: str,
+    workers: int,
+    extra_iterables: tuple[list, ...] = (),
+) -> None:
     with (
-        progress_bar(len(urls), unit=label) as advance,
+        progress_bar(len(items), unit=label) as advance,
         concurrent.futures.ProcessPoolExecutor(
             max_workers=workers, initializer=initializer, initargs=init_args
         ) as pool,
     ):
-        for _ in pool.map(target, urls, chunksize=chunksize):
+        for _ in pool.map(target, items, *extra_iterables, chunksize=chunksize):
             advance()
 
 
@@ -151,6 +163,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         process_changefile,
         process_changeset,
     )
+
+    cfg = copy.deepcopy(cfg)
 
     info(f"osmsg {__version__}")
     _normalize_urls(cfg)
@@ -171,22 +185,28 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     dbmod.create_tables(conn)
     info(f"DuckDB: {db_path}")
 
-    if cfg.update and cfg.start_date is None and cfg.urls:
-        last = get_state(conn, cfg.urls[0])
-        if last:
-            cfg.start_date = last["last_ts"]
-            info(f"--update: resuming from {cfg.start_date.isoformat()}")
-        else:
-            raise OsmsgError(
-                f"--update has no prior state for {cfg.urls[0]}. Run osmsg without --update first to seed it."
-            )
+    url_starts: dict[str, dt.datetime] = {}
+    if cfg.update:
+        if not cfg.urls:
+            raise OsmsgError("--update requires at least one source URL.")
+        for url in cfg.urls:
+            last = get_state(conn, url)
+            if not last:
+                raise OsmsgError(f"--update has no prior state for {url}. Run osmsg without --update first to seed it.")
+            url_starts[url] = last["last_ts"]
+        # Changeset-replication reads one planet-wide source; widest window covers every URL.
+        cfg.start_date = min(url_starts.values())
+        info(f"--update: resuming each source from its own state row (earliest: {cfg.start_date.isoformat()})")
+    else:
+        if cfg.start_date is None:
+            raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
+        for url in cfg.urls:
+            url_starts[url] = cfg.start_date
 
-    if cfg.start_date is None:
-        raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
     if cfg.end_date is None:
         cfg.end_date = dt.datetime.now(UTC)
-    if cfg.start_date == cfg.end_date:
-        raise OsmsgError("start_date == end_date — nothing to do.")
+    if cfg.start_date >= cfg.end_date:
+        raise OsmsgError("start_date >= end_date — nothing to do.")
 
     geom_wkt = None
     if cfg.boundary:
@@ -229,18 +249,19 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         if cfg.hashtags or cfg.boundary:
             valid_changesets = set(list_changesets(conn))
 
-    start_date_utc = cfg.start_date.astimezone(UTC)
     end_date_utc = cfg.end_date.astimezone(UTC)
 
     for url in cfg.urls:
         info(f"Changefiles ← {url}")
-        urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(cfg.start_date, cfg.end_date, url)
+        url_start = url_starts[url]
+        urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(url_start, cfg.end_date, url)
         if start_seq is None:
             start_seq = src_start_seq
         end_seq = src_end_seq
-        if server_ts < cfg.end_date:
-            cfg.end_date = server_ts
-        end_date_utc = cfg.end_date.astimezone(UTC)
+        # Cap per URL only — never mutate cfg.end_date or sibling URLs lose their window.
+        url_end_date = min(cfg.end_date, server_ts)
+        url_start_date_utc = url_start.astimezone(UTC)
+        url_end_date_utc = url_end_date.astimezone(UTC)
 
         if not urls:
             info(f"  {url}: already up-to-date")
@@ -248,11 +269,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
         cf_dir.mkdir(parents=True, exist_ok=True)
         cf_config = _processing_config(cfg, parquet_dir=cf_dir, geom_wkt=None)
-        cf_config["start_date_utc"] = start_date_utc
-        cf_config["end_date_utc"] = end_date_utc
+        cf_config["start_date_utc"] = url_start_date_utc
+        cf_config["end_date_utc"] = url_end_date_utc
 
         _download_all(urls, "changefiles", max_workers, cookie, cfg.cache_dir, "changefiles")
         chunksize = 10 if "minute" in url.lower() else 1
+        seq_ids = list(range(src_start_seq, src_end_seq + 1))
         _process_all(
             urls,
             target=process_changefile,
@@ -261,19 +283,25 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             chunksize=chunksize,
             label="changefiles",
             workers=max_workers,
+            extra_iterables=(seq_ids,),
         )
         dbmod.merge_parquet_files(conn, cf_dir, cleanup=True)
         upsert_state(
             conn,
             source_url=url,
             last_seq=src_end_seq,
-            last_ts=end_date_utc,
+            last_ts=url_end_date,
             updated_at=dt.datetime.now(UTC),
         )
         info(f"Done: {url}")
 
-    if cfg.delete_temp and cfg.cache_dir.exists():
-        shutil.rmtree(cfg.cache_dir)
+    if cfg.delete_temp:
+        # Never rmtree cfg.cache_dir itself — it may be the user's platform cache root.
+        for sub in (cs_dir, cf_dir, cfg.cache_dir / "changefiles", cfg.cache_dir / "changeset"):
+            if sub.exists():
+                shutil.rmtree(sub, ignore_errors=True)
+
+    start_date_utc = min(url_starts.values()).astimezone(UTC) if url_starts else cfg.start_date.astimezone(UTC)
 
     rows = user_stats(conn, top_n=None)
     if not rows:

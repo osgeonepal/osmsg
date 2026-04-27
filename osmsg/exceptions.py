@@ -24,8 +24,8 @@ class GeofabrikAuthError(OsmsgError):
     """The OAuth 2.0 cookie handshake against OSM/Geofabrik failed."""
 
 
-class NoDataFoundError(OsmsgError):
-    """The processing pipeline finished but produced zero rows."""
+class NoDataFoundError(Exception):
+    """Empty range — info condition, not a failure (CLI exits 0). Not an OsmsgError on purpose."""
 
 
 __all__ = [
