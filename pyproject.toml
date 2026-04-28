@@ -1,6 +1,6 @@
 [project]
 name = "osmsg"
-version = "1.0.2"
+version = "1.0.3"
 description = "OpenStreetMap Stats Generator: Commandline"
 readme = "README.md"
 authors = [

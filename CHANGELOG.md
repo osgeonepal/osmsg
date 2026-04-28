@@ -1,3 +1,9 @@
+## v1.0.3 (2026-04-28)
+
+### Perf
+
+- **url**: auto switch the replication url base don the input span
+
 ## v1.0.2 (2026-04-28)
 
 ### Fix
