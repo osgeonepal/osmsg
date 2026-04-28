@@ -80,8 +80,33 @@ def summary_markdown(
     parts.append(f"\nFull stats: `{fname}.parquet`")
 
     parts.append("\n#### Top 5 users")
+    user_cols = (
+        ("rank", "rank"),
+        ("name", "name"),
+        ("changesets", "changesets"),
+        ("map_changes", "map changes"),
+        ("nodes_create", "nodes created"),
+        ("ways_create", "ways created"),
+        ("rels_create", "rels created"),
+        ("poi_create", "poi created"),
+        ("hashtags", "hashtags"),
+    )
+    parts.append("| " + " | ".join(label for _, label in user_cols) + " |")
+    parts.append("| " + " | ".join("---" for _ in user_cols) + " |")
     for r in rows[:5]:
-        parts.append(f"- {r['name']}: {_human(int(r.get('map_changes', 0) or 0))} map changes")
+        cells: list[str] = []
+        for key, _ in user_cols:
+            v = r.get(key)
+            if key == "hashtags":
+                hts = v or []
+                cells.append(", ".join(hts[:3]) + (f" (+{len(hts) - 3})" if len(hts) > 3 else ""))
+            elif key == "name":
+                cells.append(str(v or ""))
+            elif key == "rank":
+                cells.append(str(v if v is not None else ""))
+            else:
+                cells.append(_human(int(v or 0)))
+        parts.append("| " + " | ".join(cells) + " |")
 
     if tm_stats and any("tasks_mapped" in r for r in rows):
         parts.append("\n#### Top 5 TM mappers")

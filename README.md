@@ -27,10 +27,14 @@ A Project of [OSGeo Nepal](https://osgeonepal.org).
 Pick the one that fits how you work.
 
 ```bash
+uvx --from osmsg osmsg --last hour       # zero-install, one-shot run
 pip install osmsg                        # into your project
 uv tool install osmsg                    # standalone CLI
 docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last hour
 ```
+
+`uvx` can run osmsg in a throwaway environment , no install, no virtualenv to manage. Works
+with any flag combination, e.g. `uvx --from osmsg osmsg --last hour --tags building --summary -f parquet -f markdown`.
 
 ## Quick start
 

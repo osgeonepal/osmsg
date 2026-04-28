@@ -3,12 +3,22 @@
 ## End user
 
 ```bash
+uvx --from osmsg osmsg --last hour    # zero-install, one-shot run
+# or
 pip install osmsg
 # or
 uv tool install osmsg
 ```
 
 Wheels include the compiled `pyosmium` extension; no system OSM tools are required.
+
+`uvx` (from [uv](https://docs.astral.sh/uv/)) runs osmsg in a managed, throwaway environment. handy for
+ad-hoc runs, CI jobs, and cron entries where you don't want to manage a venv. If a stale resolver cache
+ever picks an older release, add `--refresh`:
+
+```bash
+uvx --refresh --from osmsg osmsg --last hour
+```
 
 ## Docker
 
