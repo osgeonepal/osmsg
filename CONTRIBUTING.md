@@ -1,6 +1,8 @@
 # Contributing
 
-Thanks for considering a contribution to **osmsg**. This is an [OSGeo Nepal](https://osgeonepal.org) project and we welcome PRs of every size: a typo fix, a new flag, a perf patch, a docs cleanup. Please read the [Code of Conduct](./CODE_OF_CONDUCT.md) before you start.
+Thanks for considering a contribution to **osmsg**. This is an [OSGeo Nepal](https://osgeonepal.org) project and we
+welcome PRs of every size: a typo fix, a new flag, a perf patch, a docs cleanup. Please read the
+[Code of Conduct](./CODE_OF_CONDUCT.md) before you start.
 
 ## Setup
 
@@ -12,7 +14,8 @@ uv run pre-commit install
 uv run pytest -m "not network"
 ```
 
-`uv sync` installs runtime and dev dependencies (`ruff`, `ty`, `pytest`, `pre-commit`, `commitizen`) from `pyproject.toml`. `uv` is the only build/dev tool you need; no system OSM libraries are required.
+`uv sync` installs runtime and dev dependencies (`ruff`, `ty`, `pytest`, `pre-commit`, `commitizen`) from
+`pyproject.toml`. `uv` is the only build/dev tool you need; no system OSM libraries are required.
 
 If you do not have `uv` yet:
 
@@ -30,7 +33,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ## Coding standards
 
-- **Format and lint**: `ruff` (config in `pyproject.toml`). Pre-commit auto-fixes most issues. Run manually with `uv run ruff check osmsg tests` and `uv run ruff format osmsg tests`.
+- **Format and lint**: `ruff` (config in `pyproject.toml`). Pre-commit auto-fixes most issues. Run manually with
+  `uv run ruff check osmsg tests` and `uv run ruff format osmsg tests`.
 - **Type-check**: `ty` (Astral). Must pass with zero errors: `uv run ty check osmsg`.
 - **Tests**:
   - `uv run pytest -m "not network"` for offline checks.
@@ -57,7 +61,8 @@ cz bump
 git push --follow-tags
 ```
 
-`cz bump` updates the version in `pyproject.toml` and `osmsg/__version__.py`, refreshes `CHANGELOG.md`, and tags the release. Pushing the tag (or publishing a GitHub Release) triggers:
+`cz bump` updates the version in `pyproject.toml` and `osmsg/__version__.py`, refreshes `CHANGELOG.md`, and tags
+the release. Pushing the tag (or publishing a GitHub Release) triggers:
 
 - PyPI publish via [publish.yml](./.github/workflows/publish.yml) using the `PYPI_API_TOKEN` repo secret.
 - Multi-arch Docker image build to `ghcr.io/osgeonepal/osmsg` via [docker.yml](./.github/workflows/docker.yml).

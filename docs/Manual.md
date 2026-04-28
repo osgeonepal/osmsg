@@ -1,6 +1,7 @@
 # Manual
 
-The full flag reference, grouped by what you're trying to do. New here? Start with the [README quick start](../README.md#quick-start), then come back for the details.
+The full flag reference, grouped by what you're trying to do. New here? Start with the
+[README quick start](../README.md#quick-start), then come back for the details.
 
 ## Time range
 
@@ -54,9 +55,13 @@ osmsg --last day --summary                     # daily breakdown in each request
 osmsg --last day -f psql --psql-dsn "host=localhost dbname=osm user=osm"
 ```
 
-> Every run writes `<name>.duckdb` plus the formats you ask for. Parquet is the canonical exchange: open with DuckDB, polars, or pandas directly.
+> Every run writes `<name>.duckdb` plus the formats you ask for. Parquet is the canonical exchange:
+> open with DuckDB, polars, or pandas directly.
 >
-> `--summary` follows the same `-f` formats: requesting `-f csv --summary` produces both `<name>.csv` and `<name>_summary.csv`. The `psql` target is intentionally skipped for summary, since the daily breakdown is just a query over the four base tables, so consumers derive it on demand instead of duplicating data.
+> `--summary` follows the same `-f` formats: requesting `-f csv --summary` produces both `<name>.csv`
+> and `<name>_summary.csv`. The `psql` target is intentionally skipped for summary, since the daily
+> breakdown is just a query over the four base tables, so consumers derive it on demand instead of
+> duplicating data.
 
 ## Config file
 
@@ -84,17 +89,21 @@ update: true
 
 ## Caching
 
-Downloaded `.osc.gz` files cache to a per-user dir (`~/Library/Caches/osmsg` on macOS, `~/.cache/osmsg` on Linux). Re-running the same range reuses them, so no network is needed. `--cache-dir` to relocate, `--delete-temp` to clean up after a run.
+Downloaded `.osc.gz` files cache to a per-user dir (`~/Library/Caches/osmsg` on macOS,
+`~/.cache/osmsg` on Linux). Re-running the same range reuses them, so no network is needed.
+`--cache-dir` to relocate, `--delete-temp` to clean up after a run.
 
 ## Credentials
 
 `--country` and any `geofabrik` URL need OSM credentials. Resolution order:
 
-1. `--username` (CLI) + `OSM_PASSWORD` env var, or `--password-stdin` to pipe a password in (e.g. `cat secret | osmsg --password-stdin ...`)
+1. `--username` (CLI) + `OSM_PASSWORD` env var, or `--password-stdin` to pipe a password in
+   (e.g. `cat secret | osmsg --password-stdin ...`)
 2. `OSM_USERNAME` + `OSM_PASSWORD` env vars (auto-loaded from `.env`)
 3. Interactive prompt (TTY only)
 
-> The CLI does not accept `--password` directly, because passwords on the command line leak into shell history and `ps` output. Use stdin or env vars.
+> The CLI does not accept `--password` directly, because passwords on the command line leak into
+> shell history and `ps` output. Use stdin or env vars.
 
 ## Recipes
 
@@ -114,4 +123,5 @@ osmsg --start "2025-01-01 00:00:00" --end "2026-01-01 00:00:00" \
 osmsg --country nepal --update
 ```
 
-> `map_changes` per row is the sum of the nine element columns (`{nodes,ways,rels}_{created,modified,deleted}`); POI counters are tracked separately.
+> `map_changes` per row is the sum of the nine element columns
+> (`{nodes,ways,rels}_{created,modified,deleted}`); POI counters are tracked separately.
