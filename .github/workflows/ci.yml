@@ -52,7 +52,7 @@ jobs:
       - run: uv build --no-sources
 
   smoke-last-hour:
-    name: Smoke — process last hour
+    name: Smoke (process last hour)
     runs-on: ubuntu-latest
     needs: lint-typecheck-test
     timeout-minutes: 10

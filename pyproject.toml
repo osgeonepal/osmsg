@@ -6,7 +6,8 @@ readme = "README.md"
 authors = [
     {name = "Kshitij Raj Sharma", email = "skshitizraj@gmail.com"},
 ]
-license = {text = "GPL-3.0-only"}
+license = {text = "MIT"}
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.5.2",
@@ -25,6 +26,7 @@ dependencies = [
 
 keywords = ["osm", "stats", "commandline", "openstreetmap"]
 classifiers = [
+    "License :: OSI Approved :: MIT License",
     "Topic :: Utilities",
     "Topic :: Scientific/Engineering :: GIS",
     "Programming Language :: Python :: 3",

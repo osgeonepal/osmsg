@@ -1,42 +1,79 @@
 # osmsg
 
-Generate OpenStreetMap user stats from the command line. Point it at a time window, get back per-user counts of nodes/ways/relations created, modified, and deleted, in parquet, csv, json, markdown, or straight into Postgres.
+[![CI](https://github.com/osgeonepal/osmsg/actions/workflows/ci.yml/badge.svg)](https://github.com/osgeonepal/osmsg/actions/workflows/ci.yml)
+[![Docker](https://github.com/osgeonepal/osmsg/actions/workflows/docker.yml/badge.svg)](https://github.com/osgeonepal/osmsg/actions/workflows/docker.yml)
+[![PyPI](https://img.shields.io/pypi/v/osmsg.svg)](https://pypi.org/project/osmsg/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![Container](https://img.shields.io/badge/ghcr.io-osgeonepal%2Fosmsg-2496ED?logo=docker)](https://github.com/osgeonepal/osmsg/pkgs/container/osmsg)
+
+**OpenStreetMap Stats Generator.** A tiny CLI (and Python library) that turns OSM history into per-user counts of nodes, ways, and relations created, modified, or deleted, written to parquet, csv, json, markdown, or Postgres.
+
+A Project of [OSGeo Nepal](https://osgeonepal.org).
+
+## What you get
+
+- Per-user create/modify/delete counts over any time window.
+- Tag and hashtag breakdowns (e.g. `building`, `#hotosm`).
+- Country and custom-boundary filters via Geofabrik.
+- Cron-friendly resume with `--update`.
+- Outputs you can query: parquet, csv, json, markdown, DuckDB, Postgres.
 
 ## Install
 
+Pick the one that fits how you work.
+
 ```bash
-pip install osmsg
-# or, as a standalone CLI
-uv tool install osmsg
-# or, no install
+pip install osmsg                        # into your project
+uv tool install osmsg                    # standalone CLI
 docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last hour
 ```
 
-## Examples
+## Quick start
 
 ```bash
-# What happened in the last hour, planet-wide
-osmsg --last hour
-
-# Yesterday's stats for a country (needs OSM credentials, see below)
-osmsg --country nepal --last day
-
-# Custom range, with per-key tag breakdowns and a daily summary
-osmsg --start "2026-04-01" --end "2026-04-08" \
-      --tags building --tags highway --summary
-
-# Only changesets tagged #hotosm (substring by default; --exact-lookup for whole-word)
-osmsg --hashtags hotosm --last day
-
-# Cron-friendly: pick up where the last run left off
-osmsg --country nepal --update
+osmsg --last hour                        # planet, last hour
+osmsg --last day --tags building         # last day with a tag breakdown
+osmsg --hashtags hotosm --last day       # only changesets tagged #hotosm
 ```
 
-YAML configs work too if your flag list gets long: `osmsg --config nepal.yaml`.
+That's it. A `stats.duckdb` and a `stats.parquet` show up in your current folder.
 
-## Output
+## Tutorials
 
-Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus whatever formats you ask for via `-f parquet|csv|json|markdown|psql`. Parquet is the default. Open it with duckdb, polars, pandas, whatever.
+### 1. Stats for a country
+
+```bash
+osmsg --country nepal --last day
+```
+
+`--country` resolves through Geofabrik and needs an OSM account. Set `OSM_USERNAME` and `OSM_PASSWORD` in your shell or a `.env` file:
+
+```bash
+export OSM_USERNAME=you
+export OSM_PASSWORD=secret
+```
+
+### 2. A custom date range with summaries
+
+```bash
+osmsg --start "2026-04-01" --end "2026-04-08" \
+      --tags building --tags highway --summary
+```
+
+`--summary` adds a daily rollup file alongside the per-changeset stats.
+
+### 3. Run on a schedule
+
+```bash
+osmsg --country nepal --update           # picks up where the last run stopped
+```
+
+Drop that into cron or a GitHub Actions schedule. State is stored inside the DuckDB file, so reruns are safe.
+
+### 4. Query the output
 
 ```bash
 duckdb stats.duckdb -c "SELECT username, SUM(nodes_created) AS n
@@ -44,15 +81,9 @@ duckdb stats.duckdb -c "SELECT username, SUM(nodes_created) AS n
                         GROUP BY username ORDER BY n DESC LIMIT 10"
 ```
 
-The schema is the same in DuckDB and Postgres. Four tables: `users`, `changesets`, `changeset_stats`, and `state` (the resume marker for `--update`).
+Same schema in DuckDB and Postgres: `users`, `changesets`, `changeset_stats`, `state`.
 
-## Credentials
-
-`--country` (and Geofabrik URLs) need an OSM account; public planet replication (`--url minute|hour|day`) doesn't.
-
-Set `OSM_USERNAME` and `OSM_PASSWORD` in your environment or a `.env` file. Or pass `--username` and pipe the password to `--password-stdin`. OAuth 2.0 happens behind the scenes.
-
-## Library
+### 5. Use it as a library
 
 ```python
 from datetime import datetime, UTC
@@ -67,13 +98,40 @@ result = run(RunConfig(
 print(result["files"]["parquet"])
 ```
 
-That's the same pipeline the CLI runs. See [docs/Manual.md](./docs/Manual.md) for everything else.
+Same pipeline as the CLI.
 
-## Develop
+### 6. Long flag lists? Use a config
+
+```bash
+osmsg --config nepal.yaml
+```
+
+Any flag works as a YAML key. See [docs/Manual.md](./docs/Manual.md) for the full list.
+
+## Output formats
+
+Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus the formats you ask for via `-f parquet|csv|json|markdown|psql`. Parquet is the default. Open it with duckdb, polars, pandas, anything.
+
+## Documentation
+
+- [Installation](./docs/Installation.md)
+- [Manual](./docs/Manual.md) (every flag, with examples)
+- [Version control / release notes](./docs/Version_control.md)
+
+## Contributing
+
+Pull requests are welcome. Quick path:
 
 ```bash
 git clone https://github.com/osgeonepal/osmsg && cd osmsg
+git switch develop
 uv sync
-uv run pytest
-uv run osmsg --help
+uv run pre-commit install
+uv run pytest -m "not network"
 ```
+
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDUCT.md) before opening a PR. Use [Conventional Commits](https://www.conventionalcommits.org/) (`cz commit`).
+
+## License
+
+[MIT](./LICENSE) © OSGeo Nepal contributors.

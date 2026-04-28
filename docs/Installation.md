@@ -44,5 +44,5 @@ uv run pytest -m "not network"
 
 ### Tests
 
-- `pytest -m "not network"` — offline unit tests (handlers, queries, exporters, CLI).
-- `pytest -m network` — integration tests against Geofabrik / OSM (requires `OSM_USERNAME` / `OSM_PASSWORD`).
+- `pytest -m "not network"` for offline unit tests (handlers, queries, exporters, CLI).
+- `pytest -m network` for integration tests against Geofabrik / OSM (requires `OSM_USERNAME` / `OSM_PASSWORD`).
