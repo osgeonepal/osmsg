@@ -10,7 +10,15 @@ from platformdirs import user_cache_dir
 
 from osmsg.db.schema import create_tables, upsert_state
 from osmsg.exceptions import OsmsgError
-from osmsg.pipeline import RunConfig, _canonical_hashtags, _normalize_urls, _resolve_url_starts
+from osmsg.pipeline import (
+    RunConfig,
+    _auto_switch_replication,
+    _canonical_hashtags,
+    _normalize_urls,
+    _pick_replication_for_span,
+    _resolve_url_starts,
+)
+from osmsg.replication import SHORTCUTS
 
 
 def test_normalize_urls_expands_minute_shortcut():
@@ -96,5 +104,105 @@ def test_resolve_url_starts_update_missing_state_raises_per_url(tmp_path):
         updated_at=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
     )
     cfg = RunConfig(urls=["https://x", "https://y"], update=True)
-    with pytest.raises(OsmsgError, match="--update has no prior state for https://y"):
+    with pytest.raises(OsmsgError, match="no prior state for https://y"):
         _resolve_url_starts(conn, cfg)
+
+
+def test_resolve_url_starts_update_error_lists_known_urls_and_invariant(tmp_path):
+    """The error must surface (a) which URLs are seeded and (b) the seq_id double-count rationale —
+    so the user knows their two recovery options without spelunking the source."""
+    conn = _open_db(tmp_path)
+    upsert_state(
+        conn,
+        source_url="https://planet.openstreetmap.org/replication/minute",
+        last_seq=1,
+        last_ts=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
+        updated_at=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
+    )
+    cfg = RunConfig(urls=["https://planet.openstreetmap.org/replication/day"], update=True)
+    with pytest.raises(OsmsgError) as exc:
+        _resolve_url_starts(conn, cfg)
+    msg = str(exc.value)
+    assert "Existing state in this DuckDB is for" in msg
+    assert "minute" in msg  # known URL surfaced
+    assert "different --name" in msg  # recovery hint
+    assert "seq_id" in msg  # invariant referenced
+
+
+@pytest.mark.parametrize(
+    "span,expected",
+    [
+        (dt.timedelta(hours=1), "minute"),
+        (dt.timedelta(hours=5, minutes=59), "minute"),
+        (dt.timedelta(hours=6), "hour"),  # boundary: ≥6h flips to hour
+        (dt.timedelta(days=1), "hour"),
+        (dt.timedelta(days=6, hours=23), "hour"),
+        (dt.timedelta(days=7), "day"),  # boundary: ≥7d flips to day
+        (dt.timedelta(days=30), "day"),
+    ],
+)
+def test_pick_replication_for_span(span, expected):
+    assert _pick_replication_for_span(span) == expected
+
+
+def test_auto_switch_promotes_minute_to_hour_on_long_span(capsys):
+    cfg = RunConfig(urls=[SHORTCUTS["minute"]])
+    _auto_switch_replication(cfg, dt.timedelta(hours=10))
+    assert cfg.urls == [SHORTCUTS["hour"]]
+    err = capsys.readouterr().err
+    assert "auto-switching" in err
+    assert "from 'minute' to 'hour'" in err
+
+
+def test_auto_switch_promotes_minute_to_day_on_multi_day_span():
+    cfg = RunConfig(urls=[SHORTCUTS["minute"]])
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == [SHORTCUTS["day"]]
+
+
+def test_auto_switch_demotes_day_to_minute_on_short_span():
+    """A user defaulting to day for a 1h window should be moved back to minute too."""
+    cfg = RunConfig(urls=[SHORTCUTS["day"]])
+    _auto_switch_replication(cfg, dt.timedelta(hours=1))
+    assert cfg.urls == [SHORTCUTS["minute"]]
+
+
+def test_auto_switch_no_op_when_already_correct(capsys):
+    cfg = RunConfig(urls=[SHORTCUTS["hour"]])
+    _auto_switch_replication(cfg, dt.timedelta(hours=10))
+    assert cfg.urls == [SHORTCUTS["hour"]]
+    assert "auto-switching" not in capsys.readouterr().err
+
+
+def test_auto_switch_suppressed_by_url_explicit():
+    cfg = RunConfig(urls=[SHORTCUTS["minute"]], url_explicit=True)
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == [SHORTCUTS["minute"]]
+
+
+def test_auto_switch_suppressed_by_update():
+    """--update must never auto-switch — cross-URL replay would double-count via (seq_id, changeset_id)."""
+    cfg = RunConfig(urls=[SHORTCUTS["minute"]], update=True)
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == [SHORTCUTS["minute"]]
+
+
+def test_auto_switch_suppressed_by_country():
+    cfg = RunConfig(urls=[SHORTCUTS["minute"]], countries=["nepal"])
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == [SHORTCUTS["minute"]]
+
+
+def test_auto_switch_suppressed_by_multi_url():
+    urls = [SHORTCUTS["minute"], SHORTCUTS["hour"]]
+    cfg = RunConfig(urls=list(urls))
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == urls
+
+
+def test_auto_switch_skips_non_shortcut_url():
+    """A custom (e.g. Geofabrik) URL must not be silently swapped for a planet shortcut."""
+    custom = "https://download.geofabrik.de/asia/nepal-updates"
+    cfg = RunConfig(urls=[custom])
+    _auto_switch_replication(cfg, dt.timedelta(days=30))
+    assert cfg.urls == [custom]

@@ -194,6 +194,7 @@ def main(
         end_date=_parse_dt(end),
         countries=country,
         urls=url or ["minute"],
+        url_explicit=url is not None,
         workers=workers,
         additional_tags=tags,
         hashtags=hashtags,

@@ -24,7 +24,7 @@ from .exceptions import CredentialsRequiredError, NoDataFoundError, OsmsgError
 from .export import summary_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
 from .geofabrik import country_update_url
-from .replication import ChangesetReplication, changefile_download_urls, resolve_url
+from .replication import SHORTCUTS, ChangesetReplication, changefile_download_urls, resolve_url
 from .ui import info, progress_bar, warn
 
 UTC = dt.UTC
@@ -49,6 +49,7 @@ class RunConfig:
     end_date: dt.datetime | None = None
     countries: list[str] | None = None
     urls: list[str] = field(default_factory=lambda: ["https://planet.openstreetmap.org/replication/minute"])
+    url_explicit: bool = False
     workers: int | None = None
     additional_tags: list[str] | None = None
     hashtags: list[str] | None = None
@@ -83,6 +84,34 @@ def _normalize_urls(cfg: RunConfig) -> None:
     cfg.urls = list(dict.fromkeys(resolve_url(u) for u in cfg.urls))
 
 
+def _pick_replication_for_span(span: dt.timedelta) -> str:
+    span_h = span.total_seconds() / 3600
+    if span_h < 6:
+        return "minute"
+    if span_h < 24 * 7:
+        return "hour"
+    return "day"
+
+
+def _auto_switch_replication(cfg: RunConfig, span: dt.timedelta) -> None:
+    """Swap a single planet-shortcut --url for the cheapest one that covers `span`."""
+    if cfg.url_explicit or cfg.update or cfg.countries or len(cfg.urls) != 1:
+        return
+    cur = cfg.urls[0]
+    if cur not in SHORTCUTS.values():
+        return
+    target_label = _pick_replication_for_span(span)
+    target_url = SHORTCUTS[target_label]
+    if target_url == cur:
+        return
+    cur_label = next(label for label, url in SHORTCUTS.items() if url == cur)
+    warn(
+        f"Span is {span}; auto-switching --url from '{cur_label}' to '{target_label}' to reduce load. "
+        f"Pass --url {cur_label} to keep '{cur_label}'."
+    )
+    cfg.urls = [target_url]
+
+
 def _canonical_hashtags(hashtags: list[str]) -> list[str]:
     # Force leading '#' so 'hotosm' and '#hotosm' both match the '#hotosm' tokens in changeset comments.
     return ["#" + h.lstrip("#") for h in hashtags]
@@ -96,7 +125,18 @@ def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, dt.datetime]:
         for url in cfg.urls:
             last = get_state(conn, url)
             if not last:
-                raise OsmsgError(f"--update has no prior state for {url}. Run osmsg without --update first to seed it.")
+                known = [r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()]
+                hint = (
+                    f" Existing state in this DuckDB is for: {', '.join(known)}. "
+                    "Re-run --update with one of those URLs, or start fresh under a different --name."
+                    if known
+                    else " Run osmsg once without --update to seed state."
+                )
+                raise OsmsgError(
+                    f"--update cannot switch replication URL: no prior state for {url}.{hint} "
+                    "(Replaying the same window through a different granularity would double-count "
+                    "via the changeset_stats (seq_id, changeset_id) key.)"
+                )
             starts[url] = last["last_ts"]
         return starts
     if cfg.start_date is None:
@@ -219,14 +259,17 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     dbmod.create_tables(conn)
     info(f"DuckDB: {db_path}")
 
+    if cfg.end_date is None:
+        cfg.end_date = dt.datetime.now(UTC)
+    if cfg.start_date is not None:
+        _auto_switch_replication(cfg, cfg.end_date - cfg.start_date)
+
     url_starts = _resolve_url_starts(conn, cfg)
     if cfg.update:
         # Changeset-replication reads one planet-wide source; widest window covers every URL.
         cfg.start_date = min(url_starts.values())
         info(f"--update: resuming each source from its own state row (earliest: {cfg.start_date.isoformat()})")
 
-    if cfg.end_date is None:
-        cfg.end_date = dt.datetime.now(UTC)
     # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
     assert cfg.start_date is not None
     if cfg.start_date >= cfg.end_date:
@@ -235,8 +278,9 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     span = cfg.end_date - cfg.start_date
     info(f"Range: {cfg.start_date.isoformat()} → {cfg.end_date.isoformat()} ({span})")
     span_hours = span.total_seconds() / 3600
-    # 72h on minute replication is ~4,300 files; beyond that, hour/day replication is much cheaper.
-    if span_hours >= 72 and any("minute" in u.lower() for u in cfg.urls):
+    # When auto-switch was suppressed (--url explicit, --update, --country, multi-URL), a long
+    # span on minute replication still floods the network. Hint the user.
+    if span_hours >= 72 and any(u == SHORTCUTS["minute"] for u in cfg.urls):
         warn(
             f"Range spans {span_hours:.0f}h on minute replication "
             f"(~{int(span_hours * 60):,} files). Consider --url hour or --url day."

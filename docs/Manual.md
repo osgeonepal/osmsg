@@ -10,6 +10,8 @@ osmsg --last hour|day|week|month|year
 osmsg --days 7
 osmsg --start "2026-04-01 00:00:00" --end "2026-04-08 00:00:00"
 osmsg --update                       # resume from last finished run in <name>.duckdb
+                                     # (must use the same --url as the prior run; switching
+                                     # granularity would double-count via changeset_stats)
 ```
 
 > Times are UTC.
@@ -21,6 +23,11 @@ osmsg --url minute|hour|day          # planet replication shortcuts
 osmsg --url https://...              # any OSM replication base
 osmsg --country nepal --country india --country africa   # Geofabrik regions, resolved live
 ```
+
+> When `--url` is omitted, osmsg picks a planet replication granularity that fits the requested
+> span: minute for spans under 6h, hour for 6h–7d, day for ≥7d. A warning prints when the
+> auto-switch happens; pass `--url` explicitly to override (also suppressed by `--country`,
+> `--update`, or multiple `--url` values).
 
 ## Filters
 
