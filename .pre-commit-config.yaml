@@ -7,19 +7,21 @@ repos:
         stages: [commit-msg]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.5.7"
+    rev: "v0.15.12"
     hooks:
-
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-
       - id: ruff-format
 
-  - repo: https://github.com/pycontribs/mirrors-prettier
-    rev: v3.3.3
+  - repo: local
     hooks:
-      - id: prettier
-        args: [--ignore-unknown, --no-error-on-unmatched-pattern]
+      - id: ty
+        name: ty
+        entry: uv run ty check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.41.0
