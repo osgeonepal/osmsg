@@ -1,3 +1,26 @@
+## v1.0.0 (2026-04-28)
+
+### Fix
+
+- **docker**: fixes docker images , replaced  slim image with the distroless
+- **ci**: fix lib creds on ci
+- **data**: fix bug on data loss due to window changeset open
+- **stat**: completeness test cases
+- **stream**: fixes live streaming of the compressed osm files
+- **test**: fixes test case strip issue
+- **Dockerfile**: version upgrade in stage 1 - missed that one in the last commit
+- **test_app.yml**: I had to remove "" from the python version number and change the number to python3.x
+
+### Refactor
+
+- **osmsg**: Updated the processing with this approach: Workers → write Parquet (independent) → final DuckDB merge.
+- **osmsg**: Data type validation with pydantic models and multi-process implementations for processing of files
+- **build.yml-test_app.yml**: remove uneeded installs in test_app.yml and let uv set up python in both test_app.yml and build.yml
+
+### Perf
+
+- **chore**: housekeeping removing dead links
+
 ## v0.3.0 (2024-08-26)
 
 ### Feat
