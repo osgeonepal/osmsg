@@ -1,3 +1,10 @@
+## v1.0.2 (2026-04-28)
+
+### Fix
+
+- **precommit**: add lock to precommit hooks
+- **license**: fix license text on build
+
 ## v1.0.1 (2026-04-28)
 
 ### Fix
