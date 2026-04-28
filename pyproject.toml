@@ -7,7 +7,7 @@ authors = [
     {name = "Kshitij Raj Sharma", email = "skshitizraj@gmail.com"},
 ]
 license = {text = "GPL-3.0-only"}
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.5.2",
     "osmium>=4.3.1",
@@ -28,6 +28,7 @@ classifiers = [
     "Topic :: Utilities",
     "Topic :: Scientific/Engineering :: GIS",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 
@@ -79,7 +80,7 @@ version_files = [
 [tool.ruff]
 fix = true
 line-length = 120
-target-version = "py312"
+target-version = "py311"
 exclude = [
     ".git",
     ".ruff_cache",
