@@ -77,6 +77,10 @@ version_files = [
     "pyproject.toml:version",
     "osmsg/__version__.py",
 ]
+pre_bump_hooks = [
+    "uv lock",
+    "git add uv.lock",
+]
 
 [tool.ruff]
 fix = true

@@ -6,6 +6,11 @@ repos:
       - id: commitizen
         stages: [commit-msg]
 
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: "0.11.8"
+    hooks:
+      - id: uv-lock
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: "v0.15.12"
     hooks:
