@@ -194,10 +194,16 @@ def _processing_config(cfg: RunConfig, *, parquet_dir: Path, geom_wkt: str | Non
 
 
 def _download_all(
-    urls: list[str], mode: str, max_workers: int, cookie: str | None, cache_dir: Path, label: str
+    urls: list[str],
+    mode: str,
+    max_workers: int,
+    cookie: str | None,
+    cache_dir: Path,
+    label: str,
+    description: str = "downloading",
 ) -> None:
     with (
-        progress_bar(len(urls), unit=label) as advance,
+        progress_bar(len(urls), unit=label, description=description) as advance,
         concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool,
     ):
         for _ in pool.map(lambda u: download_osm_file(u, mode=mode, cookie=cookie, cache_dir=cache_dir), urls):
@@ -214,9 +220,10 @@ def _process_all(
     label: str,
     workers: int,
     extra_iterables: tuple[list, ...] = (),
+    description: str = "processing",
 ) -> None:
     with (
-        progress_bar(len(items), unit=label) as advance,
+        progress_bar(len(items), unit=label, description=description) as advance,
         concurrent.futures.ProcessPoolExecutor(
             max_workers=workers, initializer=initializer, initargs=init_args
         ) as pool,
@@ -314,7 +321,9 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             cs_config["window_start_utc"] = cfg.start_date.astimezone(UTC)
             cs_config["window_end_utc"] = cfg.end_date.astimezone(UTC)
 
-            _download_all(urls, "changeset", max_workers, None, cfg.cache_dir, "changesets")
+            _download_all(
+                urls, "changeset", max_workers, None, cfg.cache_dir, "changesets", description="Downloading changesets"
+            )
             _process_all(
                 urls,
                 target=process_changeset,
@@ -323,6 +332,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 chunksize=10,
                 label="changesets",
                 workers=max_workers,
+                description="Processing changesets",
             )
             dbmod.merge_parquet_files(conn, cs_dir, cleanup=True)
             info("Changeset processing complete.")
@@ -353,7 +363,15 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         cf_config["start_date_utc"] = url_start_date_utc
         cf_config["end_date_utc"] = url_end_date_utc
 
-        _download_all(urls, "changefiles", max_workers, cookie, cfg.cache_dir, "changefiles")
+        _download_all(
+            urls,
+            "changefiles",
+            max_workers,
+            cookie,
+            cfg.cache_dir,
+            "changefiles",
+            description="Downloading changefiles",
+        )
         chunksize = 10 if "minute" in url.lower() else 1
         seq_ids = list(range(src_start_seq, src_end_seq + 1))
         _process_all(
@@ -365,6 +383,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             label="changefiles",
             workers=max_workers,
             extra_iterables=(seq_ids,),
+            description="Processing changefiles",
         )
         dbmod.merge_parquet_files(conn, cf_dir, cleanup=True)
         upsert_state(
@@ -374,7 +393,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             last_ts=url_end_date,
             updated_at=dt.datetime.now(UTC),
         )
-        info(f"Done: {url}")
+        info(f"Changefile processing complete: {url}")
 
     if cfg.delete_temp:
         # Never rmtree cfg.cache_dir itself — it may be the user's platform cache root.
