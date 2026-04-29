@@ -27,7 +27,7 @@ def error(message: str) -> None:
 
 
 @contextmanager
-def progress_bar(total: int, unit: str = "items"):
+def progress_bar(total: int, unit: str = "items", description: str = "processing"):
     # transient=False keeps a one-line summary so cron logs / file-redirected stdout retain context.
     with Progress(
         TextColumn("[bold blue]{task.description}"),
@@ -37,7 +37,7 @@ def progress_bar(total: int, unit: str = "items"):
         console=console,
         transient=False,
     ) as bar:
-        task = bar.add_task("processing", total=total)
+        task = bar.add_task(description, total=total)
 
         def advance() -> None:
             bar.advance(task)
