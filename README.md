@@ -89,7 +89,37 @@ duckdb stats.duckdb -c "SELECT username, SUM(nodes_created) AS n
 
 Same schema in DuckDB and Postgres: `users`, `changesets`, `changeset_stats`, `state`.
 
-### 5. Use it as a library
+### 5. Run the API
+
+The Litestar API reads osmsg data from Postgres. Set `DATABASE_URL` in your environment
+or copy `.env.example` to `.env` and edit it.
+
+Insert the latest day of data into Postgres:
+
+```bash
+uv run osmsg --last day --format psql --psql-dsn "$DATABASE_URL" --name api_last_day
+```
+
+Start the API:
+
+```bash
+uv run --group api litestar --app osmsg.api.app:app run --host 0.0.0.0 --port 8000
+```
+
+Then open:
+
+```text
+http://localhost:8000/health
+http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z
+```
+
+Use `hashtag` to filter by one changeset hashtag:
+
+```text
+http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z&hashtag=%23mapathon
+```
+
+### 6. Use it as a library
 
 ```python
 from datetime import datetime, UTC
@@ -106,7 +136,7 @@ print(result["files"]["parquet"])
 
 Same pipeline as the CLI.
 
-### 6. Long flag lists? Use a config
+### 7. Long flag lists? Use a config
 
 ```bash
 osmsg --config nepal.yaml

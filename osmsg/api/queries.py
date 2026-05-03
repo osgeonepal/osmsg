@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from .db import get_pool
 
 
-async def fetch_users(*, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+async def fetch_user_stats(
+    *,
+    start: datetime,
+    end: datetime,
+    hashtag: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
     sql = """
         SELECT
             u.uid,
@@ -43,12 +51,17 @@ async def fetch_users(*, limit: int = 100, offset: int = 0) -> list[dict[str, An
                     u.uid ASC
             ) AS rank
         FROM users u
+        JOIN changesets cs ON u.uid = cs.uid
         JOIN changeset_stats st ON u.uid = st.uid
+            AND cs.changeset_id = st.changeset_id
+        WHERE cs.created_at >= $1
+            AND cs.created_at < $2
+            AND ($3::TEXT IS NULL OR $3 = ANY(cs.hashtags))
         GROUP BY u.uid, u.username
         ORDER BY map_changes DESC, u.uid ASC
-        LIMIT $1 OFFSET $2
+        LIMIT $4 OFFSET $5
     """
 
     async with get_pool().acquire() as conn:
-        rows = await conn.fetch(sql, limit, offset)
+        rows = await conn.fetch(sql, start, end, hashtag, limit, offset)
     return [dict(row) for row in rows]

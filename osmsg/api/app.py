@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 from litestar import Litestar, get
+from litestar.exceptions import HTTPException
 from litestar.openapi.config import OpenAPIConfig
 from litestar.params import Parameter
 
 from .db import close_pool, open_pool
-from .queries import fetch_users
+from .queries import fetch_user_stats
 
 
 @asynccontextmanager
@@ -25,13 +27,27 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@get("/api/v1/users")
-async def get_users(
+@get("/api/v1/user-stats")
+async def get_user_stats(
+    start: datetime,
+    end: datetime,
+    hashtag: str | None = None,
     limit: int = Parameter(default=100, ge=1, le=1000),
     offset: int = Parameter(default=0, ge=0),
 ) -> dict[str, Any]:
-    users = await fetch_users(limit=limit, offset=offset)
-    return {"count": len(users), "limit": limit, "offset": offset, "users": users}
+    if start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+
+    users = await fetch_user_stats(start=start, end=end, hashtag=hashtag, limit=limit, offset=offset)
+    return {
+        "count": len(users),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "hashtag": hashtag,
+        "limit": limit,
+        "offset": offset,
+        "users": users,
+    }
 
 
 # @get("/api/v1/stats/summary")
@@ -49,7 +65,7 @@ async def get_users(
 
 
 app = Litestar(
-    route_handlers=[health, get_users],
+    route_handlers=[health, get_user_stats],
     lifespan=[lifespan],
     openapi_config=OpenAPIConfig(title="OSMSG API", version="1.0.0", path="/docs"),
 )
