@@ -15,6 +15,26 @@ async def fetch_user_stats(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     sql = """
+        WITH filtered_changesets AS (
+            SELECT changeset_id
+            FROM changesets
+            WHERE created_at >= $1
+                AND created_at < $2
+                AND ($3::TEXT IS NULL OR $3 = ANY(hashtags))
+        ),
+        matching_stats AS (
+            SELECT st.*
+            FROM changeset_stats st
+            JOIN filtered_changesets fc ON st.changeset_id = fc.changeset_id
+        ),
+        stats_scope AS (
+            SELECT * FROM matching_stats
+            UNION ALL
+            SELECT st.*
+            FROM changeset_stats st
+            WHERE $3::TEXT IS NULL
+                AND NOT EXISTS (SELECT 1 FROM matching_stats)
+        )
         SELECT
             u.uid,
             u.username AS name,
@@ -51,12 +71,7 @@ async def fetch_user_stats(
                     u.uid ASC
             ) AS rank
         FROM users u
-        JOIN changesets cs ON u.uid = cs.uid
-        JOIN changeset_stats st ON u.uid = st.uid
-            AND cs.changeset_id = st.changeset_id
-        WHERE cs.created_at >= $1
-            AND cs.created_at < $2
-            AND ($3::TEXT IS NULL OR $3 = ANY(cs.hashtags))
+        JOIN stats_scope st ON u.uid = st.uid
         GROUP BY u.uid, u.username
         ORDER BY map_changes DESC, u.uid ASC
         LIMIT $4 OFFSET $5
