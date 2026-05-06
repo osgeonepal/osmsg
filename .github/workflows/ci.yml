@@ -25,19 +25,19 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --locked --group api
 
       - name: Ruff lint
-        run: uv run ruff check osmsg tests
+        run: uv run --group api ruff check osmsg tests
 
       - name: Ruff format check
-        run: uv run ruff format --check osmsg tests
+        run: uv run --group api ruff format --check osmsg tests
 
       - name: ty (Astral type checker)
-        run: uv run ty check osmsg
+        run: uv run --group api ty check osmsg
 
       - name: Pytest (offline)
-        run: uv run pytest -m "not network"
+        run: uv run --group api pytest -m "not network"
 
   build:
     name: Build wheel + sdist
