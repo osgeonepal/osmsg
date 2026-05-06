@@ -1,26 +1,28 @@
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 
 from .db import get_pool
 
 
-async def fetch_user_stats(
-    *,
-    start: datetime,
-    end: datetime,
-    hashtag: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> list[dict[str, Any]]:
-    sql = """
+def _user_stats_sql(*, filter_hashtags: bool) -> str:
+    changeset_filters = ["created_at >= $1", "created_at < $2"]
+    if filter_hashtags:
+        changeset_filters.append("hashtags && $3::TEXT[]")
+        limit_param = "$4"
+        offset_param = "$5"
+        enable_unfiltered_fallback = "FALSE"
+    else:
+        limit_param = "$3"
+        offset_param = "$4"
+        enable_unfiltered_fallback = "TRUE"
+
+    changeset_where = " AND ".join(changeset_filters)
+
+    return f"""
         WITH filtered_changesets AS (
             SELECT changeset_id
             FROM changesets
-            WHERE created_at >= $1
-                AND created_at < $2
-                AND ($3::TEXT IS NULL OR $3 = ANY(hashtags))
+            WHERE {changeset_where}
         ),
         matching_stats AS (
             SELECT st.*
@@ -32,7 +34,7 @@ async def fetch_user_stats(
             UNION ALL
             SELECT st.*
             FROM changeset_stats st
-            WHERE $3::TEXT IS NULL
+            WHERE {enable_unfiltered_fallback}
                 AND NOT EXISTS (SELECT 1 FROM matching_stats)
         )
         SELECT
@@ -74,9 +76,25 @@ async def fetch_user_stats(
         JOIN stats_scope st ON u.uid = st.uid
         GROUP BY u.uid, u.username
         ORDER BY map_changes DESC, u.uid ASC
-        LIMIT $4 OFFSET $5
+        LIMIT {limit_param} OFFSET {offset_param}
     """
 
+
+async def fetch_user_stats(
+    *,
+    start: datetime,
+    end: datetime,
+    hashtag: list[str] | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    filter_hashtags = bool(hashtag)
+    sql = _user_stats_sql(filter_hashtags=filter_hashtags)
+    params: list[Any] = [start, end]
+    if filter_hashtags:
+        params.append(hashtag)
+    params.extend([limit, offset])
+
     async with get_pool().acquire() as conn:
-        rows = await conn.fetch(sql, start, end, hashtag, limit, offset)
+        rows = await conn.fetch(sql, *params)
     return [dict(row) for row in rows]

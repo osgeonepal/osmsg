@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -31,7 +29,7 @@ async def health() -> dict[str, str]:
 async def get_user_stats(
     start: datetime,
     end: datetime,
-    hashtag: str | None = None,
+    hashtag: list[str] | None = None,
     limit: int = Parameter(default=100, ge=1, le=1000),
     offset: int = Parameter(default=0, ge=0),
 ) -> dict[str, Any]:

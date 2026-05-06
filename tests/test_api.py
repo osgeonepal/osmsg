@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from importlib import import_module
 
 from litestar import Litestar
@@ -32,7 +30,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
     async def fake_fetch_user_stats(*, start, end, hashtag, limit, offset):
         assert start.isoformat() == "2026-05-01T00:00:00+00:00"
         assert end.isoformat() == "2026-05-02T00:00:00+00:00"
-        assert hashtag == "#mapathon"
+        assert hashtag == ["#mapathon", "#roads"]
         assert limit == 1
         assert offset == 0
         return [
@@ -62,12 +60,13 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
     with TestClient(app) as client:
         response = client.get(
             "/api/v1/user-stats",
-            params={
-                "start": "2026-05-01T00:00:00Z",
-                "end": "2026-05-02T00:00:00Z",
-                "hashtag": "#mapathon",
-                "limit": "1",
-            },
+            params=[
+                ("start", "2026-05-01T00:00:00Z"),
+                ("end", "2026-05-02T00:00:00Z"),
+                ("hashtag", "#mapathon"),
+                ("hashtag", "#roads"),
+                ("limit", "1"),
+            ],
         )
 
     assert response.status_code == 200
@@ -75,7 +74,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
         "count": 1,
         "start": "2026-05-01T00:00:00+00:00",
         "end": "2026-05-02T00:00:00+00:00",
-        "hashtag": "#mapathon",
+        "hashtag": ["#mapathon", "#roads"],
         "limit": 1,
         "offset": 0,
         "users": [

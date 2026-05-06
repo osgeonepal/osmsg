@@ -55,7 +55,6 @@ api = [
     "litestar[standard]>=2.18.0",
 ]
 dev = [
-    {include-group = "api"},
     "pytest>=7.4.2",
     "pytest-mock>=3.14.0",
     "coverage>=7.6.1",

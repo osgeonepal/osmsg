@@ -113,7 +113,7 @@ http://localhost:8000/health
 http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z
 ```
 
-Use `hashtag` to filter by one changeset hashtag:
+Repeat `hashtag` to filter by one or more changeset hashtags:
 
 ```text
 http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z&hashtag=%23mapathon
