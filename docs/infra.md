@@ -77,6 +77,9 @@ mkdir -p /opt/osmsg/infra
 cp infra/docker-compose.yml infra/Caddyfile infra/osmsg.service /opt/osmsg/infra/
 cp infra/.env.example /opt/osmsg/infra/.env
 $EDITOR /opt/osmsg/infra/.env
+
+# The pgdata Docker volume binds to /mnt — create the directory first
+mkdir -p /mnt/osmsg/pgdata
 ```
 
 **2. Install and enable:**
