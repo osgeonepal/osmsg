@@ -1,12 +1,19 @@
+import json
+import os
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 
+import pytest
 from litestar import Litestar
 from litestar.testing import TestClient
 
 from api import app as api_app
 from api.app import health
+from api.db import close_pool, ensure_schema, open_pool
 from api.pg_schema import PG_SCHEMA as API_PG_SCHEMA
 from api.routers.v1 import normalize_hashtags, v1_router
+from osmsg.export.psql import to_psql
 from osmsg.pg_schema import PG_SCHEMA as CLI_PG_SCHEMA
 
 v1_module = import_module("api.routers.v1")
@@ -184,3 +191,202 @@ def test_user_stats_sql_omits_tag_ctes_when_tags_false():
     assert "tag_per_user" in sql_with
     assert "tag_per_user" not in sql_without
     assert "NULL::jsonb AS tag_stats" in sql_without
+
+
+def _seed_pg_via_to_psql(fresh_db, populated_db_factory, dsn):
+    populated = populated_db_factory(fresh_db)
+    populated.execute(
+        "UPDATE changeset_stats SET tag_stats = ?::JSON WHERE changeset_id = 1",
+        [
+            json.dumps(
+                {
+                    "building": {"yes": {"c": 5, "m": 1}, "house": {"c": 2, "m": 0}},
+                    "highway": {"residential": {"c": 3, "m": 0, "len": 245.7}},
+                }
+            )
+        ],
+    )
+    populated.execute(
+        "UPDATE changeset_stats SET tag_stats = ?::JSON WHERE changeset_id = 2",
+        [json.dumps({"natural": {"tree": {"c": 50, "m": 0}}})],
+    )
+    safe_dsn = dsn.replace("'", "''")
+    import duckdb
+
+    wiper = duckdb.connect(":memory:")
+    wiper.execute("INSTALL postgres")
+    wiper.execute("LOAD postgres")
+    wiper.execute(f"ATTACH '{safe_dsn}' AS pg_w (TYPE postgres)")
+    try:
+        for table in ("changeset_stats", "changesets", "users", "state"):
+            wiper.execute(f"CALL postgres_execute('pg_w', $$DELETE FROM {table}$$)")
+    finally:
+        wiper.execute("DETACH pg_w")
+        wiper.close()
+    to_psql(populated, dsn)
+
+
+@asynccontextmanager
+async def _api_lifespan(_app):
+    await open_pool()
+    await ensure_schema()
+    try:
+        yield
+    finally:
+        await close_pool()
+
+
+def _live_api_app() -> Litestar:
+    return Litestar(route_handlers=[health, v1_router], lifespan=[_api_lifespan])
+
+
+@pytest.fixture
+def live_api_client(monkeypatch, fresh_db, populated_db_factory):
+    dsn = os.environ.get("OSMSG_PG_DSN")
+    if not dsn:
+        pytest.skip("OSMSG_PG_DSN not set; live API integration not exercised")
+    pairs = [kv.strip() for kv in dsn.split() if "=" in kv]
+    parts = dict(kv.split("=", 1) for kv in pairs)
+    db_url = (
+        f"postgresql://{parts.get('user', 'osmsg')}:{parts.get('password', 'osmsg')}"
+        f"@{parts.get('host', 'localhost')}:{parts.get('port', '5432')}/{parts.get('dbname', 'osmsg')}"
+    )
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    _seed_pg_via_to_psql(fresh_db, populated_db_factory, dsn)
+    with TestClient(_live_api_app()) as client:
+        yield client
+
+
+@pytest.mark.network
+def test_live_api_stats_default_returns_dicts_not_strings(live_api_client):
+    r = live_api_client.get("/api/v1/stats")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tags"] is True
+    assert body["count"] == 2
+    by_name = {u["name"]: u for u in body["users"]}
+    assert isinstance(by_name["alice"]["tag_stats"], dict)
+    assert by_name["alice"]["tag_stats"]["building"]["yes"]["c"] == 5
+    assert by_name["alice"]["tag_stats"]["building"]["yes"]["m"] == 1
+    assert by_name["alice"]["tag_stats"]["highway"]["residential"]["len"] == 245.7
+    assert by_name["bob"]["tag_stats"]["natural"]["tree"]["c"] == 50
+
+
+@pytest.mark.network
+def test_live_api_stats_tags_false_skips_tag_stats(live_api_client):
+    r = live_api_client.get("/api/v1/stats", params={"tags": "false"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tags"] is False
+    for u in body["users"]:
+        assert u["tag_stats"] is None
+
+
+@pytest.mark.network
+def test_live_api_stats_user_totals_match_seed(live_api_client):
+    r = live_api_client.get("/api/v1/stats")
+    by_name = {u["name"]: u for u in r.json()["users"]}
+    alice = by_name["alice"]
+    bob = by_name["bob"]
+    assert alice == {
+        **alice,
+        "changesets": 1,
+        "nodes_create": 30,
+        "ways_create": 8,
+        "poi_create": 5,
+        "map_changes": 44,
+        "rank": 2,
+    }
+    assert bob == {
+        **bob,
+        "changesets": 1,
+        "nodes_create": 50,
+        "ways_create": 0,
+        "poi_create": 50,
+        "map_changes": 50,
+        "rank": 1,
+    }
+
+
+@pytest.mark.network
+def test_live_api_stats_hashtag_filters_to_matching_changesets(live_api_client):
+    r = live_api_client.get("/api/v1/stats", params={"hashtag": "mapathon"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["hashtag"] == ["#mapathon"]
+    names = {u["name"] for u in body["users"]}
+    assert names == {"alice"}
+
+
+@pytest.mark.network
+def test_live_api_stats_date_range_filters_changesets(live_api_client):
+    r = live_api_client.get(
+        "/api/v1/stats",
+        params={"start": "2026-04-02T00:00:00Z", "end": "2026-04-03T00:00:00Z"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    names = {u["name"] for u in body["users"]}
+    assert names == {"bob"}
+
+
+@pytest.mark.network
+def test_live_api_stats_pagination(live_api_client):
+    page1 = live_api_client.get("/api/v1/stats", params={"limit": 1, "offset": 0}).json()
+    page2 = live_api_client.get("/api/v1/stats", params={"limit": 1, "offset": 1}).json()
+    assert page1["limit"] == 1 and page1["offset"] == 0
+    assert page2["limit"] == 1 and page2["offset"] == 1
+    assert len(page1["users"]) == 1
+    assert len(page2["users"]) == 1
+    assert page1["users"][0]["name"] != page2["users"][0]["name"]
+
+
+@pytest.mark.network
+def test_live_api_stats_limit_validation_rejects_zero(live_api_client):
+    r = live_api_client.get("/api/v1/stats", params={"limit": 0})
+    assert r.status_code == 400
+
+
+@pytest.mark.network
+def test_live_api_stats_limit_validation_rejects_too_large(live_api_client):
+    r = live_api_client.get("/api/v1/stats", params={"limit": 1001})
+    assert r.status_code == 400
+
+
+@pytest.mark.network
+def test_live_api_stats_offset_validation_rejects_negative(live_api_client):
+    r = live_api_client.get("/api/v1/stats", params={"offset": -1})
+    assert r.status_code == 400
+
+
+@pytest.mark.network
+def test_live_api_stats_response_echoes_query(live_api_client):
+    start = datetime(2026, 4, 1, tzinfo=UTC)
+    end = start + timedelta(days=2)
+    r = live_api_client.get(
+        "/api/v1/stats",
+        params={
+            "start": start.isoformat().replace("+00:00", "Z"),
+            "end": end.isoformat().replace("+00:00", "Z"),
+            "hashtag": "mapathon",
+            "tags": "true",
+            "limit": 10,
+            "offset": 0,
+        },
+    )
+    body = r.json()
+    assert body["start"] == "2026-04-01T00:00:00Z"
+    assert body["end"] == "2026-04-03T00:00:00Z"
+    assert body["hashtag"] == ["#mapathon"]
+    assert body["tags"] is True
+    assert body["limit"] == 10
+    assert body["offset"] == 0
+
+
+@pytest.mark.network
+def test_live_api_health_reports_seeded_state(live_api_client):
+    r = live_api_client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"

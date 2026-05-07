@@ -1,3 +1,4 @@
+# No FKs: DuckDB rejects UPDATE on FK-referenced LIST/GEOMETRY columns, which would block changeset upgrades.
 DUCKDB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     uid      BIGINT PRIMARY KEY,
@@ -5,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS changesets (
     changeset_id BIGINT PRIMARY KEY,
-    uid          BIGINT NOT NULL REFERENCES users(uid),
+    uid          BIGINT NOT NULL,
     created_at   TIMESTAMPTZ,
     hashtags     VARCHAR[],
     editor       VARCHAR,
@@ -13,9 +14,9 @@ CREATE TABLE IF NOT EXISTS changesets (
 );
 CREATE INDEX IF NOT EXISTS idx_changesets_created_at ON changesets(created_at);
 CREATE TABLE IF NOT EXISTS changeset_stats (
-    changeset_id   BIGINT NOT NULL REFERENCES changesets(changeset_id),
+    changeset_id   BIGINT NOT NULL,
     seq_id         BIGINT NOT NULL,
-    uid            BIGINT NOT NULL REFERENCES users(uid),
+    uid            BIGINT NOT NULL,
     nodes_created  INTEGER DEFAULT 0,
     nodes_modified INTEGER DEFAULT 0,
     nodes_deleted  INTEGER DEFAULT 0,

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Annotated
 
 from litestar import Controller, Router, get
 from litestar.exceptions import HTTPException
@@ -32,12 +33,19 @@ class StatsController(Controller):
     @get()
     async def get_user_stats(
         self,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        hashtag: list[str] | None = None,
-        tags: bool = True,
-        limit: int = Parameter(default=100, ge=1, le=1000),
-        offset: int = Parameter(default=0, ge=0),
+        start: Annotated[
+            datetime | None, Parameter(description="Inclusive UTC lower bound (ISO 8601). If omitted, no lower bound.")
+        ] = None,
+        end: Annotated[
+            datetime | None,
+            Parameter(description="Exclusive UTC upper bound (ISO 8601). Defaults to now if start is set."),
+        ] = None,
+        hashtag: Annotated[
+            list[str] | None, Parameter(description="Filter to changesets carrying any of these hashtags. Repeatable.")
+        ] = None,
+        tags: Annotated[bool, Parameter(description="Include per-user tag_stats breakdown in the response.")] = True,
+        limit: Annotated[int, Parameter(ge=1, le=1000, description="Page size (1–1000).")] = 100,
+        offset: Annotated[int, Parameter(ge=0, description="Page offset.")] = 0,
     ) -> UserStatsResponse:
         start = start or (datetime.min.replace(tzinfo=UTC) if end else None)
         end = end or (datetime.now(tz=UTC) if start else None)

@@ -22,9 +22,22 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
             if stmt:
                 conn.execute(f"CALL postgres_execute('pg_target', $${stmt}$$)")
 
-        _copy = "INSERT INTO pg_target.{t} SELECT * FROM {t} ON CONFLICT DO NOTHING"
-        for table in ("users", "changesets", "changeset_stats"):
-            conn.execute(_copy.format(t=table))
+        conn.execute("INSERT INTO pg_target.users SELECT * FROM users ON CONFLICT DO NOTHING")
+
+        # Mirrors the DuckDB-side merge: newer non-NULL wins, NULL never downgrades.
+        conn.execute(
+            """
+            INSERT INTO pg_target.changesets AS c (changeset_id, uid, created_at, hashtags, editor, geom)
+            SELECT changeset_id, uid, created_at, hashtags, editor, geom FROM changesets
+            ON CONFLICT (changeset_id) DO UPDATE SET
+                created_at = COALESCE(EXCLUDED.created_at, c.created_at),
+                hashtags   = COALESCE(EXCLUDED.hashtags,   c.hashtags),
+                editor     = COALESCE(EXCLUDED.editor,     c.editor),
+                geom       = COALESCE(EXCLUDED.geom,       c.geom)
+            """
+        )
+
+        conn.execute("INSERT INTO pg_target.changeset_stats SELECT * FROM changeset_stats ON CONFLICT DO NOTHING")
 
         conn.execute(
             """
