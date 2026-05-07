@@ -9,9 +9,8 @@ from typing import Any
 import osmium
 import osmium.geom
 from shapely import wkt as shapely_wkt
-from shapely.geometry import Point
+from shapely.geometry import box
 
-from .boundary import bbox_centroid
 from .models import Action, Changeset, ChangesetStats, TagValueStat, User
 
 HASHTAG_RE = re.compile(r"#[\w-]+")
@@ -52,8 +51,15 @@ class ChangesetHandler(osmium.SimpleHandler):
                     return
 
         if self._geom is not None:
-            centroid_xy = bbox_centroid(c.bounds)
-            if centroid_xy is None or not self._geom.contains(Point(*centroid_xy)):
+            if not c.bounds.valid():
+                return
+            bbox = box(
+                c.bounds.bottom_left.lon,
+                c.bounds.bottom_left.lat,
+                c.bounds.top_right.lon,
+                c.bounds.top_right.lat,
+            )
+            if not self._geom.intersects(bbox):
                 return
 
         keep = bool(cfg["changeset_meta"] and not cfg["hashtags"])

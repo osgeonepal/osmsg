@@ -1,33 +1,27 @@
-name: Publish to PyPI
+name: Release
 
 on:
-  release:
-    types: [ published ]
   push:
     tags:
       - "v*"
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  publish:
+  release:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/osmsg/
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-
-      - name: Build wheel + sdist
-        run: uv build --no-sources
-
-      - name: Publish to PyPI
+      - run: uv build --no-sources
+      - run: uv publish
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: uv publish dist/*

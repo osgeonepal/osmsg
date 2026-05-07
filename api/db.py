@@ -3,6 +3,8 @@ import os
 import asyncpg
 from dotenv import load_dotenv
 
+from .pg_schema import PG_SCHEMA
+
 load_dotenv()
 
 _pool: asyncpg.Pool | None = None
@@ -32,3 +34,10 @@ def get_pool() -> asyncpg.Pool:
     if _pool is None:
         raise RuntimeError("Database pool is not initialized")
     return _pool
+
+
+async def ensure_schema() -> None:
+    statements = [s.strip() for s in PG_SCHEMA.strip().split(";") if s.strip()]
+    async with get_pool().acquire() as conn:
+        for stmt in statements:
+            await conn.execute(stmt)

@@ -1,35 +1,52 @@
+default_language_version:
+  python: python3
+
 repos:
-  # Versioning
-  - repo: https://github.com/commitizen-tools/commitizen
-    rev: v3.29.0
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-      - id: commitizen
-        stages: [commit-msg]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: fix-byte-order-marker
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: "0.11.8"
     hooks:
       - id: uv-lock
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.15.12"
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
-
   - repo: local
     hooks:
       - id: ty
-        name: ty
+        name: ty (type checker)
         entry: uv run ty check
         language: system
         types_or: [python, pyi]
         pass_filenames: false
         require_serial: true
+        stages: [pre-commit]
 
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.41.0
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -m "not network"
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.6.0
     hooks:
-      - id: markdownlint
-        args: [--fix, --ignore, CHANGELOG.md]
+      - id: commitizen
+        stages: [commit-msg]
