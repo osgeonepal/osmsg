@@ -24,6 +24,9 @@ services:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
     ports:
       - "8000:8000"
+    volumes:
+      - ./api:/app/api
+    command: ["--reload"]
     depends_on:
       db:
         condition: service_healthy

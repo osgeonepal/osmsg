@@ -52,7 +52,7 @@ module-root = ""
 [dependency-groups]
 api = [
     "asyncpg>=0.30.0",
-    "litestar[standard]>=2.18.0",
+    "litestar[standard,pydantic]>=2.18.0",
 ]
 dev = [
     "pytest>=7.4.2",

@@ -36,7 +36,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv \
-        "litestar[standard]>=2.18.0" \
+        "litestar[standard,pydantic]>=2.18.0" \
         "asyncpg>=0.30.0" \
         "python-dotenv>=1.2.2"
 
@@ -69,6 +69,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 ENTRYPOINT ["/app/.venv/bin/litestar", "--app", "api.app:app", "run", "--host", "0.0.0.0", "--port", "8000"]
+CMD []
 
 
 FROM python:3.13-slim AS worker

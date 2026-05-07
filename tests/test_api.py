@@ -4,11 +4,12 @@ from litestar import Litestar
 from litestar.testing import TestClient
 
 from api import app as api_app
-from api.app import get_user_stats, health, normalize_hashtags
+from api.app import health
 from api.pg_schema import PG_SCHEMA as API_PG_SCHEMA
+from api.routers.v1 import normalize_hashtags, v1_router
 from osmsg.pg_schema import PG_SCHEMA as CLI_PG_SCHEMA
 
-api_module = import_module("api.app")
+v1_module = import_module("api.routers.v1")
 
 
 def test_pg_schema_in_sync():
@@ -19,7 +20,7 @@ def test_api_exposes_only_active_public_routes():
     paths = {route.path for route in api_app.routes}
 
     assert "/health" in paths
-    assert "/api/v1/user-stats" in paths
+    assert "/api/v1/stats" in paths
     assert "/api/v1/stats/summary" not in paths
     assert "/api/v1/stats/timeseries" not in paths
 
@@ -45,6 +46,11 @@ def test_normalize_hashtags_accepts_bare_or_prefixed_values():
 
 def test_normalize_hashtags_dedupes_case_insensitively():
     assert normalize_hashtags(["maproulette", "#MapRoulette", "#roads"]) == ["#maproulette", "#roads"]
+
+
+def _stats_app(monkeypatch, fake_fetch):
+    monkeypatch.setattr(v1_module, "fetch_user_stats", fake_fetch)
+    return Litestar(route_handlers=[v1_router])
 
 
 def test_user_stats_endpoint_returns_expected_response(monkeypatch):
@@ -75,12 +81,9 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(api_module, "fetch_user_stats", fake_fetch_user_stats)
-    app = Litestar(route_handlers=[get_user_stats])
-
-    with TestClient(app) as client:
+    with TestClient(_stats_app(monkeypatch, fake_fetch_user_stats)) as client:
         response = client.get(
-            "/api/v1/user-stats",
+            "/api/v1/stats",
             params=[
                 ("start", "2026-05-01T00:00:00Z"),
                 ("end", "2026-05-02T00:00:00Z"),
@@ -93,8 +96,8 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "count": 1,
-        "start": "2026-05-01T00:00:00+00:00",
-        "end": "2026-05-02T00:00:00+00:00",
+        "start": "2026-05-01T00:00:00Z",
+        "end": "2026-05-02T00:00:00Z",
         "hashtag": ["#mapathon", "#roads"],
         "limit": 1,
         "offset": 0,
@@ -125,12 +128,9 @@ def test_user_stats_endpoint_rejects_invalid_date_range(monkeypatch):
     async def fake_fetch_user_stats(**kwargs):
         raise AssertionError("fetch_user_stats should not be called")
 
-    monkeypatch.setattr(api_module, "fetch_user_stats", fake_fetch_user_stats)
-    app = Litestar(route_handlers=[get_user_stats])
-
-    with TestClient(app) as client:
+    with TestClient(_stats_app(monkeypatch, fake_fetch_user_stats)) as client:
         response = client.get(
-            "/api/v1/user-stats",
+            "/api/v1/stats",
             params={"start": "2026-05-02T00:00:00Z", "end": "2026-05-01T00:00:00Z"},
         )
 
