@@ -80,6 +80,14 @@ def _user_stats_sql(*, filter_hashtags: bool) -> str:
     """
 
 
+async def fetch_state() -> dict[str, Any] | None:
+    async with get_pool().acquire() as conn:
+        row = await conn.fetchrow("SELECT last_seq, last_ts, updated_at FROM state ORDER BY updated_at DESC LIMIT 1")
+    if row is None:
+        return None
+    return dict(row)
+
+
 async def fetch_user_stats(
     *,
     start: datetime,

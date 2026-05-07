@@ -12,7 +12,7 @@ from litestar.response import Template
 from litestar.template.config import TemplateConfig
 
 from .db import close_pool, ensure_schema, open_pool
-from .queries import fetch_user_stats
+from .queries import fetch_state, fetch_user_stats
 
 TEMPLATES = Path(__file__).parent / "templates"
 
@@ -51,8 +51,13 @@ async def home() -> Template:
 
 
 @get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    state = await fetch_state()
+    return {
+        "status": "ok",
+        "last_seq": state["last_seq"] if state else None,
+        "last_updated": state["last_ts"].isoformat() if state else None,
+    }
 
 
 @get("/api/v1/user-stats")
