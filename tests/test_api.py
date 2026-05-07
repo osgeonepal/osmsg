@@ -5,13 +5,13 @@ from litestar.testing import TestClient
 
 from api import app as api_app
 from api.app import get_user_stats, health
-from api.db import PG_SCHEMA as API_PG_SCHEMA
-from osmsg.export.psql import PG_SCHEMA as CLI_PG_SCHEMA
+from api.pg_schema import PG_SCHEMA as API_PG_SCHEMA
+from osmsg.pg_schema import PG_SCHEMA as CLI_PG_SCHEMA
 
 api_module = import_module("api.app")
 
 
-def test_pg_schema_is_in_sync_with_cli():
+def test_pg_schema_in_sync():
     assert API_PG_SCHEMA == CLI_PG_SCHEMA
 
 
