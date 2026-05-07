@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,21 +62,23 @@ async def health() -> dict[str, Any]:
 
 @get("/api/v1/user-stats")
 async def get_user_stats(
-    start: datetime,
-    end: datetime,
+    start: datetime | None = None,
+    end: datetime | None = None,
     hashtag: list[str] | None = None,
     limit: int = Parameter(default=100, ge=1, le=1000),
     offset: int = Parameter(default=0, ge=0),
 ) -> dict[str, Any]:
-    if start >= end:
+    start = start or (datetime.min.replace(tzinfo=UTC) if end else None)
+    end = end or (datetime.now(tz=UTC) if start else None)
+    if start and end and start >= end:
         raise HTTPException(status_code=400, detail="start must be before end")
 
     normalized_hashtag = normalize_hashtags(hashtag)
     users = await fetch_user_stats(start=start, end=end, hashtag=normalized_hashtag, limit=limit, offset=offset)
     return {
         "count": len(users),
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
         "hashtag": normalized_hashtag,
         "limit": limit,
         "offset": offset,

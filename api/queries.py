@@ -4,25 +4,34 @@ from typing import Any
 from .db import get_pool
 
 
-def _user_stats_sql(*, filter_hashtags: bool) -> str:
-    changeset_filters = ["created_at >= $1", "created_at < $2"]
+def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool) -> str:
+    n = 1
+    changeset_filters: list[str] = []
+
+    if filter_dates:
+        changeset_filters.append(f"created_at >= ${n}")
+        n += 1
+        changeset_filters.append(f"created_at < ${n}")
+        n += 1
+
     if filter_hashtags:
-        changeset_filters.append("hashtags && $3::TEXT[]")
-        limit_param = "$4"
-        offset_param = "$5"
+        changeset_filters.append(f"hashtags && ${n}::TEXT[]")
+        n += 1
         enable_unfiltered_fallback = "FALSE"
     else:
-        limit_param = "$3"
-        offset_param = "$4"
         enable_unfiltered_fallback = "TRUE"
 
-    changeset_where = " AND ".join(changeset_filters)
+    limit_param = f"${n}"
+    n += 1
+    offset_param = f"${n}"
+
+    changeset_where = f"WHERE {' AND '.join(changeset_filters)}" if changeset_filters else ""
 
     return f"""
         WITH filtered_changesets AS (
             SELECT changeset_id
             FROM changesets
-            WHERE {changeset_where}
+            {changeset_where}
         ),
         matching_stats AS (
             SELECT st.*
@@ -90,15 +99,18 @@ async def fetch_state() -> dict[str, Any] | None:
 
 async def fetch_user_stats(
     *,
-    start: datetime,
-    end: datetime,
+    start: datetime | None = None,
+    end: datetime | None = None,
     hashtag: list[str] | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
+    filter_dates = start is not None and end is not None
     filter_hashtags = bool(hashtag)
-    sql = _user_stats_sql(filter_hashtags=filter_hashtags)
-    params: list[Any] = [start, end]
+    sql = _user_stats_sql(filter_dates=filter_dates, filter_hashtags=filter_hashtags)
+    params: list[Any] = []
+    if filter_dates:
+        params.extend([start, end])
     if filter_hashtags:
         params.append(hashtag)
     params.extend([limit, offset])
