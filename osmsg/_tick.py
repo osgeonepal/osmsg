@@ -17,11 +17,10 @@ def _has_state(db_path: Path, source_url: str) -> bool:
     if not db_path.exists():
         return False
     conn = connect(str(db_path))
-    try:
-        create_tables(conn)
-        return get_state(conn, source_url) is not None
-    finally:
-        conn.close()
+    create_tables(conn)
+    result = get_state(conn, source_url) is not None
+    conn.close()
+    return result
 
 
 def main() -> int:
@@ -55,8 +54,6 @@ def main() -> int:
         str(out),
         "--cache-dir",
         str(cache),
-        "--format",
-        "parquet",
     ]
     if country:
         cmd.extend(["--country", country])
@@ -68,6 +65,8 @@ def main() -> int:
         cmd.extend(["--boundary", boundary])
     if psql_dsn:
         cmd.extend(["--format", "psql", "--psql-dsn", psql_dsn])
+    else:
+        cmd.extend(["--format", "parquet"])
 
     if _has_state(db_path, source_url):
         cmd.append("--update")

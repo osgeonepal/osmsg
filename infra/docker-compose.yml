@@ -7,8 +7,6 @@ services:
       POSTGRES_DB: osmsg
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U osmsg -d osmsg"]
       interval: 5s
@@ -17,22 +15,16 @@ services:
     restart: unless-stopped
 
   api:
-    build:
-      context: .
-      target: api
+    image: ghcr.io/osgeonepal/osmsg-api:latest
     environment:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
-    ports:
-      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
   worker:
-    build:
-      context: .
-      target: worker
+    image: ghcr.io/osgeonepal/osmsg-worker:latest
     environment:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
       OSMSG_NAME: ${OSMSG_NAME:-stats}
@@ -52,7 +44,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   pgdata:
   osmsg-data:
   osmsg-cache:
+  caddy-data:
+  caddy-config:
