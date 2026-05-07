@@ -77,7 +77,9 @@ def _resolve_country_urls(countries: list[str]) -> list[str]:
 
 
 def _normalize_urls(cfg: RunConfig) -> None:
-    if cfg.countries:
+    # Explicit --url wins over --country's default Geofabrik URL; --country still
+    # contributes the boundary geometry filter downstream.
+    if cfg.countries and not cfg.url_explicit:
         cfg.urls = _resolve_country_urls(cfg.countries)
         return
     # Order-preserving dedupe: cfg.urls[0] is load-bearing for resume.

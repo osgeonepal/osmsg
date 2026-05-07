@@ -46,6 +46,21 @@ def test_normalize_urls_preserves_order():
     assert cfg.urls == ["https://example.com/zebra", "https://example.com/alpha"]
 
 
+def test_normalize_urls_country_alone_uses_geofabrik():
+    """--country with no explicit --url falls through to the Geofabrik country feed."""
+    cfg = RunConfig(countries=["nepal"], urls=["minute"], url_explicit=False)
+    _normalize_urls(cfg)
+    assert cfg.urls == ["https://download.geofabrik.de/asia/nepal-updates"]
+
+
+def test_normalize_urls_explicit_url_overrides_country():
+    """--url is explicit user intent; it must beat --country's default Geofabrik URL.
+    --country still applies the boundary geometry filter downstream (handled elsewhere)."""
+    cfg = RunConfig(countries=["nepal"], urls=["minute"], url_explicit=True)
+    _normalize_urls(cfg)
+    assert cfg.urls == ["https://planet.openstreetmap.org/replication/minute"]
+
+
 def test_run_config_defaults_to_parquet():
     cfg = RunConfig()
     assert cfg.formats == ["parquet"]
