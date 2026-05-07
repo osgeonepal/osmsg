@@ -1,0 +1,117 @@
+{% extends "base.html" %} {% block title %}About · OSMSG{% endblock %} {% block
+content %}
+
+<div class="hero">
+  <div class="hero-grid">
+    <div class="hero-left">
+      <div class="hero-badge">On-the-fly · Command-line · OpenStreetMap</div>
+      <h1>Stats generator for OSM contributions</h1>
+      <p>
+        Track changesets, hashtags, countries, and users — instantly. Used by
+        <a href="https://twitter.com/stats_osm" class="hero-link">@stats_osm</a
+        >.
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat-item">
+          <span class="stat-number">1.2M+</span>
+          <span class="stat-label">commits</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">6</span>
+          <span class="stat-label">output formats</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-number">∞</span>
+          <span class="stat-label">custom periods</span>
+        </div>
+      </div>
+
+      <div class="cta-group">
+        <a href="" class="btn-primary btn-inline-icon">
+          <span class="material-icons btn-icon">download</span>
+          View on GitHub
+        </a>
+        <a
+          href="https://github.com/MadanBelbase/osmsstats#readme"
+          class="btn-secondary btn-inline-icon"
+        >
+          <span class="material-icons btn-icon">menu_book</span>
+          Read manual
+        </a>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="sample-title">
+        <span class="material-icons sample-title-icon">data_object</span>
+        sample stats output
+      </div>
+
+      <div class="sample-json">
+        { "username": "Mappers", "uid": 148273, "changesets": 1, "nodes.create":
+        1071, "nodes.modify": 2100, "ways.create": 146, "ways.modify": 69,
+        "building.create": 138, "highway.create": 5, "total_map_changes": 3387 }
+      </div>
+
+      <div class="sample-formats">
+        <span class="sample-format-item">
+          <span class="material-icons icon-bar-chart">bar_chart</span>
+          json · csv · excel · image
+        </span>
+        <span class="sample-format-item">
+          <span class="material-icons icon-tag-green">tag</span>
+          hotosm
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="feature-section">
+  <h2 class="section-title">Why OSMSG ?</h2>
+  <div class="feature-grid">
+    <div class="card">
+      <h3 class="feature-card-title">
+        <span class="material-icons icon-public">public</span>
+        Country / region
+      </h3>
+      <p>
+        Use Geofabrik or any replication URL. Extract stats for Nepal, global,
+        or custom boundaries.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 class="feature-card-title">
+        <span class="material-icons icon-tag-orange">tag</span>
+        Hashtag deep-dive
+      </h3>
+      <p>
+        Track #hotosm or any custom hashtag: contributions, users, edits per
+        tag.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 class="feature-card-title">
+        <span class="material-icons icon-graph">auto_graph</span>
+        Auto charts + summary
+      </h3>
+      <p>
+        Generate charts automatically with <code>--charts</code>. Visualizations
+        ready for socials.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 class="feature-card-title">
+        <span class="material-icons icon-folder">folder_copy</span>
+        Multiple formats
+      </h3>
+      <p>CSV, JSON, Excel, image, text - pipe stats anywhere.</p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

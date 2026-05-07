@@ -1,0 +1,57 @@
+{% extends "base.html" %} {% block title %}Contact · OSMSG{% endblock %} {%
+block content %}
+
+<div class="container contact-page-container">
+  <div class="contact-card">
+    <h1 class="contact-title">
+      <span class="material-icons contact-title-icon">contact_support</span>
+      Contact Us
+    </h1>
+    <p class="contact-subtitle">
+      Have questions about OSM Stats Generator? Reach out to us through any of
+      the channels below.
+    </p>
+
+    <div class="contact-grid">
+      <div class="contact-item">
+        <span class="material-icons contact-icon-mail">mail</span>
+        <div>
+          <h3 class="contact-item-title">Email</h3>
+          <p class="contact-item-desc">info@osmsg.project</p>
+        </div>
+      </div>
+
+      <div class="contact-item">
+        <span class="material-icons contact-icon-twitter">alternate_email</span>
+        <div>
+          <h3 class="contact-item-title">Twitter (X)</h3>
+          <p class="contact-item-desc">
+            <a
+              href="https://twitter.com/stats_osm"
+              target="_blank"
+              class="contact-link"
+              >@stats_osm</a
+            >
+          </p>
+        </div>
+      </div>
+
+      <div class="contact-item">
+        <span class="material-icons contact-icon-github">code</span>
+        <div>
+          <h3 class="contact-item-title">GitHub</h3>
+          <p class="contact-item-desc">
+            <a
+              href="https://github.com/osgeonepal"
+              target="_blank"
+              class="contact-link"
+              >OsGeoNepal</a
+            >
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
