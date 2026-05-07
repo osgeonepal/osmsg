@@ -35,9 +35,16 @@ osmsg --country nepal --country india --country africa   # Geofabrik regions, re
 osmsg --hashtags hotosm-project-1234 --hashtags mapathon
 osmsg --hashtags mapathon --exact-lookup       # match whole hashtag, not substring
 osmsg --users alice --users bob
-osmsg --boundary region.geojson
+osmsg --boundary nepal                         # Geofabrik region name
+osmsg --boundary region.geojson               # path to a GeoJSON file
+osmsg --boundary '{"type":"Polygon",...}'     # inline GeoJSON string
 ```
 
+> `--boundary` filters changesets whose bounding box intersects the given geometry.
+> A Geofabrik region name resolves from the same index as `--country` — no separate file needed.
+> `--boundary` only filters; it does not change the replication source.
+> To scope the replication source to a country's diffs, use `--country` instead.
+>
 > Each `--users`, `--hashtags`, `--tags`, `--length`, `--country`, `--url`, `-f`
 > takes one value at a time; pass the flag again for additional values.
 >
@@ -125,6 +132,9 @@ osmsg --hashtags smforst --days 6 --summary --tm-stats
 osmsg --start "2025-01-01 00:00:00" --end "2026-01-01 00:00:00" \
       --url day --all-tags -f parquet -f psql \
       --psql-dsn "host=localhost dbname=osm_stats user=osm"
+
+# All-time Nepal stats via planet/day (Geofabrik only keeps ~4 months per country)
+osmsg --url day --boundary nepal --start "2012-09-13" -f parquet -f psql ...
 
 # Cron / systemd: refresh Nepal nightly
 osmsg --country nepal --update

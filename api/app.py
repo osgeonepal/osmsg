@@ -7,13 +7,14 @@ from litestar.exceptions import HTTPException
 from litestar.openapi.config import OpenAPIConfig
 from litestar.params import Parameter
 
-from .db import close_pool, open_pool
+from .db import close_pool, ensure_schema, open_pool
 from .queries import fetch_user_stats
 
 
 @asynccontextmanager
 async def lifespan(app: Litestar):
     await open_pool()
+    await ensure_schema()
     try:
         yield
     finally:

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from platformdirs import user_cache_dir
+from shapely.ops import unary_union
 
 from . import db as dbmod
 from . import tm
@@ -23,7 +24,7 @@ from .db.schema import get_state, upsert_state
 from .exceptions import CredentialsRequiredError, NoDataFoundError, OsmsgError
 from .export import summary_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
-from .geofabrik import country_update_url
+from .geofabrik import country_geometry, country_update_url
 from .replication import SHORTCUTS, ChangesetReplication, changefile_download_urls, resolve_url
 from .ui import info, progress_bar, warn
 
@@ -297,6 +298,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     if cfg.boundary:
         cfg.changeset = cfg.changeset or not cfg.hashtags
         geom_wkt = load_boundary(cfg.boundary).wkt
+    elif cfg.countries:
+        geoms = [country_geometry(r) for r in cfg.countries]
+        cfg.changeset = cfg.changeset or not cfg.hashtags
+        geom_wkt = (unary_union(geoms) if len(geoms) > 1 else geoms[0]).wkt
 
     # summary/tm_stats read the changesets table — populate it even if user didn't ask.
     if (cfg.tm_stats or cfg.summary) and not cfg.changeset and not cfg.hashtags:

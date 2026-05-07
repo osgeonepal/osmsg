@@ -139,7 +139,12 @@ def main(
         int | None,
         typer.Option(help="Cap rows shown in the console table. Files always carry the full set."),
     ] = None,
-    boundary: Annotated[str | None, typer.Option(help="Path to GeoJSON or inline geojson string.")] = None,
+    boundary: Annotated[
+        str | None,
+        typer.Option(
+            help="Boundary filter: Geofabrik region name (e.g. 'nepal'), GeoJSON file path, or inline GeoJSON."
+        ),
+    ] = None,
     formats: Annotated[list[Format] | None, typer.Option("--format", "-f", help="One or more output formats.")] = None,
     summary: Annotated[bool, typer.Option(help="Also write <name>_summary.parquet + summary.md.")] = False,
     changeset: Annotated[bool, typer.Option(hidden=True)] = False,

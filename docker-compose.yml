@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: osmsg
+      POSTGRES_PASSWORD: osmsg
+      POSTGRES_DB: osmsg
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osmsg -d osmsg"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
+      OSMSG_NAME: ${OSMSG_NAME:-stats}
+      OSMSG_URL: ${OSMSG_URL:-minute}
+      OSMSG_COUNTRY: ${OSMSG_COUNTRY:-}
+      OSMSG_BOOTSTRAP: ${OSMSG_BOOTSTRAP:-hour}
+      OSMSG_BOOTSTRAP_DAYS: ${OSMSG_BOOTSTRAP_DAYS:-}
+      OSMSG_BOUNDARY: ${OSMSG_BOUNDARY:-}
+      OSMSG_SCHEDULE: ${OSMSG_SCHEDULE:-*/2 * * * *}
+      OSM_USERNAME: ${OSM_USERNAME:-}
+      OSM_PASSWORD: ${OSM_PASSWORD:-}
+    volumes:
+      - osmsg-data:/var/lib/osmsg
+      - osmsg-cache:/var/cache/osmsg
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  osmsg-data:
+  osmsg-cache:

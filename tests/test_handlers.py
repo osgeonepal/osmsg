@@ -27,6 +27,9 @@ def _write_changeset_xml(tmp_path, name, changesets):
             f'num_changes="{cs.get("num_changes", 1)}" user="{cs.get("user", "alice")}" '
             f'uid="{cs.get("uid", 10)}" comments_count="0"'
         )
+        if "bbox" in cs:
+            min_lon, min_lat, max_lon, max_lat = cs["bbox"]
+            attrs += f' min_lat="{min_lat}" min_lon="{min_lon}" max_lat="{max_lat}" max_lon="{max_lon}"'
         if is_open:
             attrs += ' open="true"'
         else:
@@ -653,6 +656,27 @@ def test_changefile_handler_none_valid_changesets_means_no_filter(osc_factory, c
     handler = ChangefileHandler(changefile_config, sequence_id=1, valid_changesets=None)
     handler.apply_file(str(osc))
     assert set(handler.stats.keys()) == {1, 2}
+
+
+def test_changeset_handler_geom_filter_intersects_not_centroid(tmp_path, changeset_config):
+    """Border-straddling changesets must be kept (intersects), not silently dropped."""
+    from shapely.geometry import box
+
+    boundary = box(0, 0, 10, 10)
+    changeset_config["geom_filter_wkt"] = boundary.wkt
+    p = _write_changeset_xml(
+        tmp_path,
+        "cs_geom.osm",
+        [
+            {"id": 1, "bbox": (1, 1, 2, 2)},
+            {"id": 2, "bbox": (9, 9, 12, 12)},
+            {"id": 3, "bbox": (20, 20, 25, 25)},
+            {"id": 4},
+        ],
+    )
+    h = ChangesetHandler(changeset_config)
+    h.apply_file(str(p))
+    assert set(h.changesets.keys()) == {1, 2}
 
 
 @pytest.mark.parametrize("version,expected_bucket", [(1, "c"), (2, "m"), (0, "d")])

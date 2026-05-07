@@ -14,7 +14,7 @@ of nodes, ways, and relations created, modified, or deleted, written to parquet,
 
 A Project of [OSGeo Nepal](https://osgeonepal.org).
 
-## What you get
+## Features
 
 - Per-user create/modify/delete counts over any time window.
 - Tag and hashtag breakdowns (e.g. `building`, `#hotosm`).
@@ -91,33 +91,20 @@ Same schema in DuckDB and Postgres: `users`, `changesets`, `changeset_stats`, `s
 
 ### 5. Run the API
 
-The Litestar API reads osmsg data from Postgres. Set `DATABASE_URL` in your environment
-or copy `.env.example` to `.env` and edit it.
-
-Insert the latest day of data into Postgres:
+Push stats into Postgres, then start the Litestar API:
 
 ```bash
-uv run osmsg --last day --format psql --psql-dsn "$DATABASE_URL" --name api_last_day
+osmsg --last day --format psql --psql-dsn "postgresql://user:pass@localhost/osmsg"
+litestar --app api.app:app run --host 0.0.0.0 --port 8000
 ```
-
-Start the API:
-
-```bash
-uv run --group api litestar --app osmsg.api.app:app run --host 0.0.0.0 --port 8000
-```
-
-Then open:
 
 ```text
-http://localhost:8000/health
-http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z
+GET /health
+GET /api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z
+GET /docs
 ```
 
-Repeat `hashtag` to filter by one or more changeset hashtags:
-
-```text
-http://localhost:8000/api/v1/user-stats?start=2026-05-01T00:00:00Z&end=2026-05-02T00:00:00Z&hashtag=%23mapathon
-```
+For self-hosting with Docker Compose and systemd, see [docs/infra.md](./docs/infra.md).
 
 ### 6. Use it as a library
 
@@ -138,6 +125,7 @@ Same pipeline as the CLI.
 
 ### 7. Long flag lists? Use a config
 
+
 ```bash
 osmsg --config nepal.yaml
 ```
@@ -153,6 +141,7 @@ Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus the formats you ask 
 
 - [Installation](./docs/Installation.md)
 - [Manual](./docs/Manual.md) (every flag, with examples)
+- [Self-hosting / Docker Compose](./docs/infra.md)
 - [Version control / release notes](./docs/Version_control.md)
 
 ## Contributing
