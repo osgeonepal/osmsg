@@ -22,8 +22,6 @@ services:
       target: api
     environment:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
-    ports:
-      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -52,7 +50,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   pgdata:
   osmsg-data:
   osmsg-cache:
+  caddy-data:
+  caddy-config:
