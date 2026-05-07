@@ -29,7 +29,10 @@ def test_health_endpoint_returns_ok():
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["last_seq"] is None
+    assert data["last_updated"] is None
 
 
 def test_normalize_hashtags_accepts_bare_or_prefixed_values():

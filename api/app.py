@@ -52,7 +52,10 @@ async def home() -> Template:
 
 @get("/health")
 async def health() -> dict[str, Any]:
-    state = await fetch_state()
+    try:
+        state = await fetch_state()
+    except Exception:
+        state = None
     return {
         "status": "ok",
         "last_seq": state["last_seq"] if state else None,
