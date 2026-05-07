@@ -53,6 +53,7 @@ def test_pg_schema_statements_each_parse_with_postgres_extension():
         .replace("GEOMETRY(POLYGON)", "GEOMETRY")
     )
     conn = duckdb.connect(":memory:")
+    conn.execute("INSTALL spatial")
     conn.execute("LOAD spatial")
     for stmt in [s.strip() for s in duckdb_clone.split(";") if s.strip()]:
         upper = stmt.upper()

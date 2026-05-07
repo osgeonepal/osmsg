@@ -114,6 +114,7 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
         if any(parquet_dir.glob("temp_*_users_*.parquet")):
             conn.execute(f"INSERT OR IGNORE INTO users SELECT uid, username FROM read_parquet('{pattern('users')}')")
         if any(parquet_dir.glob("temp_*_changesets_*.parquet")):
+            conn.execute("INSTALL spatial")
             conn.execute("LOAD spatial")
             conn.execute(
                 f"""

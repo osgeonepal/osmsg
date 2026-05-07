@@ -12,6 +12,7 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
     """
     conn.execute("INSTALL postgres")
     conn.execute("LOAD postgres")
+    conn.execute("INSTALL spatial")
     conn.execute("LOAD spatial")
     safe_dsn = dsn.replace("'", "''")
     conn.execute(f"ATTACH '{safe_dsn}' AS pg_target (TYPE postgres)")
