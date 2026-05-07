@@ -4,7 +4,7 @@ from litestar import Litestar
 from litestar.testing import TestClient
 
 from api import app as api_app
-from api.app import get_user_stats, health
+from api.app import get_user_stats, health, normalize_hashtags
 from api.pg_schema import PG_SCHEMA as API_PG_SCHEMA
 from osmsg.pg_schema import PG_SCHEMA as CLI_PG_SCHEMA
 
@@ -30,6 +30,18 @@ def test_health_endpoint_returns_ok():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_normalize_hashtags_accepts_bare_or_prefixed_values():
+    assert normalize_hashtags(["maproulette", "#HOTOSM", "  #roads  ", ""]) == [
+        "#maproulette",
+        "#HOTOSM",
+        "#roads",
+    ]
+
+
+def test_normalize_hashtags_dedupes_case_insensitively():
+    assert normalize_hashtags(["maproulette", "#MapRoulette", "#roads"]) == ["#maproulette", "#roads"]
 
 
 def test_user_stats_endpoint_returns_expected_response(monkeypatch):
@@ -69,7 +81,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
             params=[
                 ("start", "2026-05-01T00:00:00Z"),
                 ("end", "2026-05-02T00:00:00Z"),
-                ("hashtag", "#mapathon"),
+                ("hashtag", "mapathon"),
                 ("hashtag", "#roads"),
                 ("limit", "1"),
             ],
