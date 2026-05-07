@@ -390,3 +390,81 @@ def test_live_api_health_reports_seeded_state(live_api_client):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
+
+
+@pytest.mark.network
+def test_live_api_returns_orphan_stats_when_no_filter(live_api_client):
+    """Orphan stats (no parent changesets row) must surface when no filter is applied."""
+    dsn = os.environ["OSMSG_PG_DSN"]
+    safe_dsn = dsn.replace("'", "''")
+    import duckdb
+
+    conn = duckdb.connect(":memory:")
+    conn.execute("INSTALL postgres")
+    conn.execute("LOAD postgres")
+    conn.execute(f"ATTACH '{safe_dsn}' AS pg (TYPE postgres)")
+    try:
+        conn.execute(
+            "CALL postgres_execute('pg', $$"
+            "ALTER TABLE changeset_stats "
+            "DROP CONSTRAINT IF EXISTS changeset_stats_changeset_id_fkey"
+            "$$)"
+        )
+        conn.execute(
+            "CALL postgres_execute('pg', $$"
+            "INSERT INTO changeset_stats (changeset_id, seq_id, uid, nodes_created) "
+            "VALUES (9999, 9999, 10, 7) ON CONFLICT DO NOTHING"
+            "$$)"
+        )
+    finally:
+        conn.execute("DETACH pg")
+        conn.close()
+
+    r = live_api_client.get("/api/v1/stats")
+    assert r.status_code == 200
+    by_name = {u["name"]: u for u in r.json()["users"]}
+    assert by_name["alice"]["nodes_create"] == 30 + 7  # original 30 + orphan stub
+
+
+@pytest.mark.network
+def test_live_api_date_filter_with_no_matches_returns_empty_not_all(live_api_client):
+    """Date filter with no matches must return empty, not silently fall back to all."""
+    r = live_api_client.get(
+        "/api/v1/stats",
+        params={"start": "2099-01-01T00:00:00Z", "end": "2099-12-31T00:00:00Z"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 0
+    assert body["users"] == []
+
+
+def test_user_stats_sql_no_filter_skips_changesets_join():
+    """No-filter path must not JOIN the changesets table — orphan stats would be dropped."""
+    from api.queries import _user_stats_sql
+
+    sql = _user_stats_sql(filter_dates=False, filter_hashtags=False, include_tags=False)
+    assert "filtered_changesets" not in sql
+    assert "JOIN filtered_changesets" not in sql
+    assert "stats_scope AS (SELECT * FROM changeset_stats)" in sql
+
+
+def test_user_stats_sql_filtered_uses_changesets_join():
+    """Filtered path must scope through changesets so date/hashtag predicates apply."""
+    from api.queries import _user_stats_sql
+
+    sql_dates = _user_stats_sql(filter_dates=True, filter_hashtags=False, include_tags=False)
+    sql_tags = _user_stats_sql(filter_dates=False, filter_hashtags=True, include_tags=False)
+    for sql in (sql_dates, sql_tags):
+        assert "filtered_changesets" in sql
+        assert "JOIN filtered_changesets" in sql
+
+
+def test_user_stats_sql_no_unfiltered_fallback_remains():
+    """The buggy 'fallback to all stats when matching is empty' branch must be gone."""
+    from api.queries import _user_stats_sql
+
+    for combo in [(True, True), (True, False), (False, True), (False, False)]:
+        sql = _user_stats_sql(filter_dates=combo[0], filter_hashtags=combo[1], include_tags=False)
+        assert "NOT EXISTS (SELECT 1 FROM matching_stats)" not in sql
+        assert "enable_unfiltered_fallback" not in sql

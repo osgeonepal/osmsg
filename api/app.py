@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from litestar import Litestar, get
+from litestar.config.cors import CORSConfig
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.openapi.config import OpenAPIConfig
 from litestar.openapi.plugins import SwaggerRenderPlugin
@@ -47,6 +48,7 @@ async def health() -> HealthResponse:
 app = Litestar(
     route_handlers=[home, health, v1_router],
     lifespan=[lifespan],
+    cors_config=CORSConfig(allow_origins=["*"]),
     openapi_config=OpenAPIConfig(
         title="OSMSG API",
         version="1.0.0",

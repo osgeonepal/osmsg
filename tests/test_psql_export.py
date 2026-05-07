@@ -337,3 +337,85 @@ def test_to_psql_upgrades_empty_changeset_when_pushed_again(fresh_db, tmp_path):
     assert hashtags == ["#x"]
     assert has_geom is True
     assert n_stats == 1
+
+
+@pytest.mark.network
+@pytest.mark.skipif(not os.environ.get("OSMSG_PG_DSN"), reason="OSMSG_PG_DSN not set; live PG push not exercised")
+def test_to_psql_refuses_when_pg_has_data_from_a_different_source(fresh_db, populated_db_factory):
+    """Pushing source B to a PG that already has source A's state must hard-error."""
+    import datetime as _dt
+
+    from osmsg.exceptions import OsmsgError
+
+    dsn = os.environ["OSMSG_PG_DSN"]
+    safe_dsn = dsn.replace("'", "''")
+
+    populated = populated_db_factory(fresh_db)
+    populated.execute("INSTALL postgres")
+    populated.execute("LOAD postgres")
+    populated.execute(f"ATTACH '{safe_dsn}' AS pg_w (TYPE postgres)")
+    try:
+        for stmt in PG_SCHEMA.strip().split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                populated.execute(f"CALL postgres_execute('pg_w', $${stmt}$$)")
+        for table in ("changeset_stats", "changesets", "users", "state"):
+            populated.execute(f"CALL postgres_execute('pg_w', $$DELETE FROM {table}$$)")
+    finally:
+        populated.execute("DETACH pg_w")
+
+    populated.execute(
+        "INSERT INTO state VALUES (?, ?, ?, ?)",
+        [
+            "https://download.geofabrik.de/asia/nepal-updates",
+            100,
+            _dt.datetime(2026, 5, 1, tzinfo=_dt.UTC),
+            _dt.datetime(2026, 5, 1, tzinfo=_dt.UTC),
+        ],
+    )
+    to_psql(populated, dsn)
+
+    populated.execute("DELETE FROM state")
+    populated.execute(
+        "INSERT INTO state VALUES (?, ?, ?, ?)",
+        [
+            "https://planet.openstreetmap.org/replication/minute",
+            7000000,
+            _dt.datetime(2026, 5, 7, tzinfo=_dt.UTC),
+            _dt.datetime(2026, 5, 7, tzinfo=_dt.UTC),
+        ],
+    )
+
+    with pytest.raises(OsmsgError, match="Mixing sources"):
+        to_psql(populated, dsn)
+
+
+@pytest.mark.network
+@pytest.mark.skipif(not os.environ.get("OSMSG_PG_DSN"), reason="OSMSG_PG_DSN not set; live PG push not exercised")
+def test_to_psql_allows_repush_from_same_source(fresh_db, populated_db_factory):
+    """A second push from the SAME source URL is fine — common --update path."""
+    import datetime as _dt
+
+    dsn = os.environ["OSMSG_PG_DSN"]
+    safe_dsn = dsn.replace("'", "''")
+
+    populated = populated_db_factory(fresh_db)
+    populated.execute("INSTALL postgres")
+    populated.execute("LOAD postgres")
+    populated.execute(f"ATTACH '{safe_dsn}' AS pg_w (TYPE postgres)")
+    try:
+        for stmt in PG_SCHEMA.strip().split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                populated.execute(f"CALL postgres_execute('pg_w', $${stmt}$$)")
+        for table in ("changeset_stats", "changesets", "users", "state"):
+            populated.execute(f"CALL postgres_execute('pg_w', $$DELETE FROM {table}$$)")
+    finally:
+        populated.execute("DETACH pg_w")
+
+    populated.execute(
+        "INSERT INTO state VALUES ('https://planet.openstreetmap.org/replication/minute', 1, ?, ?)",
+        [_dt.datetime(2026, 5, 1, tzinfo=_dt.UTC), _dt.datetime(2026, 5, 1, tzinfo=_dt.UTC)],
+    )
+    to_psql(populated, dsn)
+    to_psql(populated, dsn)

@@ -35,26 +35,31 @@ def seq_to_timestamp(state_url: str) -> datetime:
 
 
 def changefile_download_urls(
-    start_date: datetime, end_date: datetime, base_url: str
+    start_date: datetime | None,
+    end_date: datetime,
+    base_url: str,
+    *,
+    resume_seq: int | None = None,
 ) -> tuple[list[str], datetime, int, int, str, str]:
-    """Return (urls, server_ts, start_seq, end_seq, start_seq_url, end_seq_url).
-
-    For Geofabrik base URLs, public list-URLs are rewritten to the internal server
-    (which carries uid/changeset_id metadata; the OAuth 2.0 cookie is required at fetch time).
-    """
+    """resume_seq starts exactly there (skipping the timestamp lookup + backward pad used on first runs)."""
     repl = ReplicationServer(base_url)
 
-    seq = repl.timestamp_to_sequence(start_date)
-    if seq is None:
-        raise OsmsgError(f"Cannot reach replication service '{base_url}'")
+    if resume_seq is not None:
+        seq = resume_seq
+    else:
+        if start_date is None:
+            raise OsmsgError("changefile_download_urls requires either start_date or resume_seq")
+        seq = repl.timestamp_to_sequence(start_date)
+        if seq is None:
+            raise OsmsgError(f"Cannot reach replication service '{base_url}'")
 
-    start_seq_time = seq_to_timestamp(repl.get_state_url(seq))
-    if start_date > start_seq_time:
-        # Pad backwards by one window so we never miss a diff straddling the boundary.
-        if "minute" in base_url:
-            seq = (seq + int((start_date - start_seq_time).total_seconds() / 60)) - 60
-        elif "hour" in base_url:
-            seq = (seq + int((start_date - start_seq_time).total_seconds() / 3600)) - 1
+        start_seq_time = seq_to_timestamp(repl.get_state_url(seq))
+        if start_date > start_seq_time:
+            # Pad backwards by one window so we never miss a diff straddling the boundary.
+            if "minute" in base_url:
+                seq = (seq + int((start_date - start_seq_time).total_seconds() / 60)) - 60
+            elif "hour" in base_url:
+                seq = (seq + int((start_date - start_seq_time).total_seconds() / 3600)) - 1
 
     start_seq = seq
     start_seq_url = repl.get_state_url(start_seq)

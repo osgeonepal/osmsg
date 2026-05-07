@@ -126,7 +126,7 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
                 FROM read_parquet('{pattern("changesets")}')
                 """
             )
-            # OSM re-emits changesets monotonically richer each time; newer non-NULL columns win, NULL never downgrades.
+            # Newer non-NULL wins; dedupe src so multiple emits per window don't trip the PK on UPDATE.
             conn.execute(
                 f"""
                 UPDATE changesets c
@@ -135,11 +135,17 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
                     editor     = COALESCE(src.editor,     c.editor),
                     geom       = COALESCE(src.geom,       c.geom)
                 FROM (
-                    SELECT changeset_id, created_at, hashtags, editor,
+                    SELECT DISTINCT ON (changeset_id)
+                           changeset_id, created_at, hashtags, editor,
                            CASE WHEN min_lon IS NOT NULL
                                THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat)
                            END AS geom
                     FROM read_parquet('{pattern("changesets")}')
+                    ORDER BY changeset_id,
+                             (min_lon IS NOT NULL) DESC,
+                             (editor IS NOT NULL)  DESC,
+                             (hashtags IS NOT NULL) DESC,
+                             created_at DESC NULLS LAST
                 ) src
                 WHERE c.changeset_id = src.changeset_id
                   AND (src.created_at IS NOT NULL OR src.hashtags IS NOT NULL

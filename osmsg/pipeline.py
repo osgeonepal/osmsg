@@ -119,11 +119,12 @@ def _canonical_hashtags(hashtags: list[str]) -> list[str]:
     return ["#" + h.lstrip("#") for h in hashtags]
 
 
-def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, dt.datetime]:
+def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, tuple[dt.datetime, int | None]]:
+    """Per-URL (start_ts, resume_seq); resume_seq is set only on --update."""
     if cfg.update:
         if not cfg.urls:
             raise OsmsgError("--update requires at least one source URL.")
-        starts: dict[str, dt.datetime] = {}
+        starts: dict[str, tuple[dt.datetime, int | None]] = {}
         for url in cfg.urls:
             last = get_state(conn, url)
             if not last:
@@ -139,11 +140,11 @@ def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, dt.datetime]:
                     "(Replaying the same window through a different granularity would double-count "
                     "via the changeset_stats (seq_id, changeset_id) key.)"
                 )
-            starts[url] = last["last_ts"]
+            starts[url] = (last["last_ts"], last["last_seq"] + 1)
         return starts
     if cfg.start_date is None:
         raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
-    return {url: cfg.start_date for url in cfg.urls}
+    return {url: (cfg.start_date, None) for url in cfg.urls}
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
@@ -275,7 +276,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     url_starts = _resolve_url_starts(conn, cfg)
     if cfg.update:
         # Changeset-replication reads one planet-wide source; widest window covers every URL.
-        cfg.start_date = min(url_starts.values())
+        cfg.start_date = min(ts for ts, _seq in url_starts.values())
         info(f"--update: resuming each source from its own state row (earliest: {cfg.start_date.isoformat()})")
 
     # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
@@ -349,8 +350,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     for url in cfg.urls:
         info(f"Changefiles ← {url}")
-        url_start = url_starts[url]
-        urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(url_start, cfg.end_date, url)
+        url_start, resume_seq = url_starts[url]
+        urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(
+            url_start, cfg.end_date, url, resume_seq=resume_seq
+        )
         if start_seq is None:
             start_seq = src_start_seq
         end_seq = src_end_seq
@@ -406,7 +409,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             if sub.exists():
                 shutil.rmtree(sub, ignore_errors=True)
 
-    start_date_utc = min(url_starts.values()).astimezone(UTC) if url_starts else cfg.start_date.astimezone(UTC)
+    if url_starts:
+        start_date_utc = min(ts for ts, _seq in url_starts.values()).astimezone(UTC)
+    else:
+        start_date_utc = cfg.start_date.astimezone(UTC)
 
     rows = user_stats(conn, top_n=None)
     if not rows:

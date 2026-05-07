@@ -51,15 +51,24 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
     if filter_hashtags:
         changeset_filters.append(f"hashtags && ${n}::TEXT[]")
         n += 1
-        enable_unfiltered_fallback = "FALSE"
-    else:
-        enable_unfiltered_fallback = "TRUE"
 
     limit_param = f"${n}"
     n += 1
     offset_param = f"${n}"
 
-    changeset_where = f"WHERE {' AND '.join(changeset_filters)}" if changeset_filters else ""
+    # No filter -> all stats (orphans included); any filter -> JOIN through changesets.
+    if changeset_filters:
+        scope_cte = f"""
+        WITH filtered_changesets AS (
+            SELECT changeset_id FROM changesets WHERE {" AND ".join(changeset_filters)}
+        ),
+        stats_scope AS (
+            SELECT st.*
+            FROM changeset_stats st
+            JOIN filtered_changesets fc ON st.changeset_id = fc.changeset_id
+        )"""
+    else:
+        scope_cte = "WITH stats_scope AS (SELECT * FROM changeset_stats)"
 
     tag_ctes = _TAG_CTES if include_tags else ""
     tag_select = "tpu.tag_stats" if include_tags else "NULL::jsonb AS tag_stats"
@@ -67,24 +76,7 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
     tag_group = ", tpu.tag_stats" if include_tags else ""
 
     return f"""
-        WITH filtered_changesets AS (
-            SELECT changeset_id
-            FROM changesets
-            {changeset_where}
-        ),
-        matching_stats AS (
-            SELECT st.*
-            FROM changeset_stats st
-            JOIN filtered_changesets fc ON st.changeset_id = fc.changeset_id
-        ),
-        stats_scope AS (
-            SELECT * FROM matching_stats
-            UNION ALL
-            SELECT st.*
-            FROM changeset_stats st
-            WHERE {enable_unfiltered_fallback}
-                AND NOT EXISTS (SELECT 1 FROM matching_stats)
-        ){tag_ctes}
+        {scope_cte}{tag_ctes}
         SELECT
             u.uid,
             u.username AS name,

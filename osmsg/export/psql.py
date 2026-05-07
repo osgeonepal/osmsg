@@ -2,6 +2,7 @@
 
 import duckdb
 
+from ..exceptions import OsmsgError
 from ..pg_schema import PG_SCHEMA
 
 
@@ -21,6 +22,18 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
             stmt = stmt.strip()
             if stmt:
                 conn.execute(f"CALL postgres_execute('pg_target', $${stmt}$$)")
+
+        # Refuse cross-source push: would double-count via the (seq_id, changeset_id) PK.
+        local_sources = {r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()}
+        existing_sources = {r[0] for r in conn.execute("SELECT source_url FROM pg_target.state").fetchall()}
+        cross_source = existing_sources - local_sources
+        if cross_source and local_sources:
+            raise OsmsgError(
+                f"PG target already has data from source(s) {sorted(cross_source)} "
+                f"but this run pushes from {sorted(local_sources)}. Mixing sources "
+                f"double-counts via the (seq_id, changeset_id) key. Use a separate "
+                f"--psql-dsn, or wipe the existing PG tables first."
+            )
 
         conn.execute("INSERT INTO pg_target.users SELECT * FROM users ON CONFLICT DO NOTHING")
 

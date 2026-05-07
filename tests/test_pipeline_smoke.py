@@ -87,7 +87,7 @@ def test_resolve_url_starts_no_update_uses_cfg_start(tmp_path):
     start = dt.datetime(2026, 4, 1, tzinfo=dt.UTC)
     cfg = RunConfig(urls=["https://x", "https://y"], start_date=start)
     starts = _resolve_url_starts(conn, cfg)
-    assert starts == {"https://x": start, "https://y": start}
+    assert starts == {"https://x": (start, None), "https://y": (start, None)}
 
 
 def test_resolve_url_starts_no_update_no_start_raises(tmp_path):
@@ -106,7 +106,18 @@ def test_resolve_url_starts_update_reads_each_url_state_row(tmp_path):
     upsert_state(conn, source_url="https://y", last_seq=2, last_ts=ts_y, updated_at=ts_y)
     cfg = RunConfig(urls=["https://x", "https://y"], update=True)
     starts = _resolve_url_starts(conn, cfg)
-    assert starts == {"https://x": ts_x, "https://y": ts_y}
+    assert starts == {"https://x": (ts_x, 2), "https://y": (ts_y, 3)}
+
+
+def test_resolve_url_starts_update_resume_seq_is_last_seq_plus_one(tmp_path):
+    """--update must resume at last_seq + 1 — no overlap, no gap, no backward pad."""
+    conn = _open_db(tmp_path)
+    ts = dt.datetime(2026, 5, 1, tzinfo=dt.UTC)
+    upsert_state(conn, source_url="https://planet", last_seq=12345, last_ts=ts, updated_at=ts)
+    cfg = RunConfig(urls=["https://planet"], update=True)
+    starts = _resolve_url_starts(conn, cfg)
+    _ts, resume_seq = starts["https://planet"]
+    assert resume_seq == 12346
 
 
 def test_resolve_url_starts_update_missing_state_raises_per_url(tmp_path):
