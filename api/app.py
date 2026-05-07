@@ -1,14 +1,20 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from litestar import Litestar, get
+from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.exceptions import HTTPException
 from litestar.openapi.config import OpenAPIConfig
 from litestar.params import Parameter
+from litestar.response import Template
+from litestar.template.config import TemplateConfig
 
 from .db import close_pool, ensure_schema, open_pool
 from .queries import fetch_user_stats
+
+TEMPLATES = Path(__file__).parent / "templates"
 
 
 def normalize_hashtags(hashtag: list[str] | None) -> list[str] | None:
@@ -37,6 +43,11 @@ async def lifespan(app: Litestar):
         yield
     finally:
         await close_pool()
+
+
+@get("/", include_in_schema=False)
+async def home() -> Template:
+    return Template("home.html")
 
 
 @get("/health")
@@ -68,22 +79,9 @@ async def get_user_stats(
     }
 
 
-# @get("/api/v1/stats/summary")
-# async def get_summary(start_date: datetime, end_date: datetime, hashtag: str | None = None) -> dict:
-#     if start_date > end_date:
-#         return {"error": "start_date must be before end_date"}
-#     return {"message": "Temporarily disabled"}
-
-
-# @get("/api/v1/stats/timeseries")
-# async def get_timeseries(start_date: datetime, end_date: datetime, hashtag: str | None = None) -> dict:
-#     if start_date > end_date:
-#         return {"error": "start_date must be before end_date"}
-#     return {"message": "Temporarily disabled"}
-
-
 app = Litestar(
-    route_handlers=[health, get_user_stats],
+    route_handlers=[home, health, get_user_stats],
     lifespan=[lifespan],
     openapi_config=OpenAPIConfig(title="OSMSG API", version="1.0.0", path="/docs"),
+    template_config=TemplateConfig(directory=TEMPLATES, engine=JinjaTemplateEngine),  # ty: ignore[invalid-argument-type]
 )
