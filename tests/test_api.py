@@ -54,10 +54,11 @@ def _stats_app(monkeypatch, fake_fetch):
 
 
 def test_user_stats_endpoint_returns_expected_response(monkeypatch):
-    async def fake_fetch_user_stats(*, start, end, hashtag, limit, offset):
+    async def fake_fetch_user_stats(*, start, end, hashtag, tags, limit, offset):
         assert start.isoformat() == "2026-05-01T00:00:00+00:00"
         assert end.isoformat() == "2026-05-02T00:00:00+00:00"
         assert hashtag == ["#mapathon", "#roads"]
+        assert tags is True
         assert limit == 1
         assert offset == 0
         return [
@@ -78,6 +79,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
                 "poi_modify": 1,
                 "map_changes": 58,
                 "rank": 1,
+                "tag_stats": {"building": {"yes": {"c": 3, "m": 0}}},
             }
         ]
 
@@ -99,6 +101,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
         "start": "2026-05-01T00:00:00Z",
         "end": "2026-05-02T00:00:00Z",
         "hashtag": ["#mapathon", "#roads"],
+        "tags": True,
         "limit": 1,
         "offset": 0,
         "users": [
@@ -119,6 +122,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
                 "poi_modify": 1,
                 "map_changes": 58,
                 "rank": 1,
+                "tag_stats": {"building": {"yes": {"c": 3, "m": 0, "len": None}}},
             }
         ],
     }
@@ -136,3 +140,47 @@ def test_user_stats_endpoint_rejects_invalid_date_range(monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "start must be before end"
+
+
+def test_user_stats_endpoint_tags_false_drops_tag_stats(monkeypatch):
+    async def fake_fetch_user_stats(*, tags, **_kwargs):
+        assert tags is False
+        return [
+            {
+                "uid": 10,
+                "name": "alice",
+                "changesets": 1,
+                "nodes_create": 0,
+                "nodes_modify": 0,
+                "nodes_delete": 0,
+                "ways_create": 0,
+                "ways_modify": 0,
+                "ways_delete": 0,
+                "rels_create": 0,
+                "rels_modify": 0,
+                "rels_delete": 0,
+                "poi_create": 0,
+                "poi_modify": 0,
+                "map_changes": 0,
+                "rank": 1,
+                "tag_stats": None,
+            }
+        ]
+
+    with TestClient(_stats_app(monkeypatch, fake_fetch_user_stats)) as client:
+        response = client.get("/api/v1/stats", params={"tags": "false"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tags"] is False
+    assert body["users"][0]["tag_stats"] is None
+
+
+def test_user_stats_sql_omits_tag_ctes_when_tags_false():
+    from api.queries import _user_stats_sql
+
+    sql_with = _user_stats_sql(filter_dates=False, filter_hashtags=False, include_tags=True)
+    sql_without = _user_stats_sql(filter_dates=False, filter_hashtags=False, include_tags=False)
+    assert "tag_per_user" in sql_with
+    assert "tag_per_user" not in sql_without
+    assert "NULL::jsonb AS tag_stats" in sql_without

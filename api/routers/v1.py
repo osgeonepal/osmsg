@@ -35,6 +35,7 @@ class StatsController(Controller):
         start: datetime | None = None,
         end: datetime | None = None,
         hashtag: list[str] | None = None,
+        tags: bool = True,
         limit: int = Parameter(default=100, ge=1, le=1000),
         offset: int = Parameter(default=0, ge=0),
     ) -> UserStatsResponse:
@@ -44,13 +45,21 @@ class StatsController(Controller):
             raise HTTPException(status_code=400, detail="start must be before end")
 
         normalized_hashtag = normalize_hashtags(hashtag)
-        rows = await fetch_user_stats(start=start, end=end, hashtag=normalized_hashtag, limit=limit, offset=offset)
+        rows = await fetch_user_stats(
+            start=start,
+            end=end,
+            hashtag=normalized_hashtag,
+            tags=tags,
+            limit=limit,
+            offset=offset,
+        )
         users = [UserStat(**row) for row in rows]
         return UserStatsResponse(
             count=len(users),
             start=start,
             end=end,
             hashtag=normalized_hashtag,
+            tags=tags,
             limit=limit,
             offset=offset,
             users=users,

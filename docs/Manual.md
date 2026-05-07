@@ -56,8 +56,8 @@ osmsg --boundary '{"type":"Polygon",...}'     # inline GeoJSON string
 ```bash
 osmsg --tags building --tags highway           # per-key create/modify counts
 osmsg --length highway --length waterway       # length in metres for created ways
-osmsg --all-tags                               # every tag key
-osmsg --all-tags --key-value                   # also key=value combos
+osmsg --keys                                   # every tag key (no value breakdown)
+osmsg --all                                    # every key=value combo + changeset metadata (hashtags, editors)
 ```
 
 ## Output
@@ -130,7 +130,7 @@ osmsg --hashtags smforst --days 6 --summary --tm-stats
 
 # Full year of global stats to Postgres (incremental-friendly)
 osmsg --start "2025-01-01 00:00:00" --end "2026-01-01 00:00:00" \
-      --url day --all-tags -f parquet -f psql \
+      --url day --all -f parquet -f psql \
       --psql-dsn "host=localhost dbname=osm_stats user=osm"
 
 # All-time Nepal stats via planet/day (Geofabrik only keeps ~4 months per country)

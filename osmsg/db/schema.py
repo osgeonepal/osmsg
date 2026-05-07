@@ -16,6 +16,7 @@ def close(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def create_tables(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute("LOAD spatial")
     for stmt in DUCKDB_SCHEMA.strip().split(";"):
         stmt = stmt.strip()
         if stmt:

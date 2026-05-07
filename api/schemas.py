@@ -3,6 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class TagValueStats(BaseModel):
+    c: int = 0
+    m: int = 0
+    len: float | None = None
+
+
 class UserStat(BaseModel):
     uid: int
     name: str
@@ -20,6 +26,7 @@ class UserStat(BaseModel):
     poi_modify: int
     map_changes: int
     rank: int
+    tag_stats: dict[str, dict[str, TagValueStats]] | None = None
 
 
 class UserStatsResponse(BaseModel):
@@ -27,6 +34,7 @@ class UserStatsResponse(BaseModel):
     start: datetime | None
     end: datetime | None
     hashtag: list[str] | None
+    tags: bool
     limit: int
     offset: int
     users: list[UserStat]

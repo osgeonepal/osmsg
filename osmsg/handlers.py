@@ -172,7 +172,7 @@ class ChangefileHandler(osmium.SimpleHandler):
         length_keys = cfg["length"] or ()
         track_length = len_m > 0 and action is Action.CREATE
 
-        if cfg["all_tags"]:
+        if cfg["tag_mode"] != "none":
             for k, v in tags:
                 tv = stats.tag_stats.setdefault(k, {}).setdefault(v, TagValueStat())
                 tv.add(action)

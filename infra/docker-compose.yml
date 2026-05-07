@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgis/postgis:17-3.5-alpine
+    platform: linux/amd64
     environment:
       POSTGRES_USER: osmsg
       POSTGRES_PASSWORD: osmsg
@@ -47,15 +48,12 @@ services:
     image: ghcr.io/osgeonepal/osmsg-worker:latest
     environment:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
-      OSMSG_NAME: ${OSMSG_NAME:-stats}
-      OSMSG_URL: ${OSMSG_URL:-minute}
-      OSMSG_COUNTRY: ${OSMSG_COUNTRY:-}
+      OSMSG_SCHEDULE: ${OSMSG_SCHEDULE:-*/2 * * * *}
       OSMSG_BOOTSTRAP: ${OSMSG_BOOTSTRAP:-hour}
       OSMSG_BOOTSTRAP_DAYS: ${OSMSG_BOOTSTRAP_DAYS:-}
-      OSMSG_BOUNDARY: ${OSMSG_BOUNDARY:-}
-      OSMSG_SCHEDULE: ${OSMSG_SCHEDULE:-*/2 * * * *}
       OSM_USERNAME: ${OSM_USERNAME:-}
       OSM_PASSWORD: ${OSM_PASSWORD:-}
+      OSMSG_EXTRA_ARGS: ${OSMSG_EXTRA_ARGS:-}
     volumes:
       - osmsg-data:/var/lib/osmsg
       - osmsg-cache:/var/cache/osmsg

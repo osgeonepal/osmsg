@@ -1,12 +1,4 @@
-"""PostgreSQL exporter via DuckDB's postgres extension.
-
-No new Python dep — DuckDB attaches the target Postgres database, mirrors the
-osmsg schema, and runs `INSERT … SELECT` so the same DuckDB → Postgres copy
-benefits from streaming. The tables created on the Postgres side mirror the
-osmsg DuckDB schema, which makes both backends queryable identically.
-"""
-
-from __future__ import annotations
+"""PostgreSQL exporter via DuckDB's postgres extension."""
 
 import duckdb
 
@@ -14,9 +6,13 @@ from ..pg_schema import PG_SCHEMA
 
 
 def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
-    """Push every osmsg table into the libpq DSN target. DSN must be trusted (ATTACH interpolation)."""
+    """Push every osmsg table to the libpq DSN target.
+
+    DSN must be trusted — it is interpolated directly into the ATTACH statement.
+    """
     conn.execute("INSTALL postgres")
     conn.execute("LOAD postgres")
+    conn.execute("LOAD spatial")
     safe_dsn = dsn.replace("'", "''")
     conn.execute(f"ATTACH '{safe_dsn}' AS pg_target (TYPE postgres)")
     try:
@@ -25,11 +21,10 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
             if stmt:
                 conn.execute(f"CALL postgres_execute('pg_target', $${stmt}$$)")
 
-        # Tables with natural primary keys: ON CONFLICT DO NOTHING is a no-op safety net.
+        _copy = "INSERT INTO pg_target.{t} SELECT * FROM {t} ON CONFLICT DO NOTHING"
         for table in ("users", "changesets", "changeset_stats"):
-            conn.execute(f"INSERT INTO pg_target.{table} SELECT * FROM {table} ON CONFLICT DO NOTHING")
+            conn.execute(_copy.format(t=table))
 
-        # state is single-row-per-source: UPSERT to mirror the DuckDB-side truth.
         conn.execute(
             """
             INSERT INTO pg_target.state (source_url, last_seq, last_ts, updated_at)

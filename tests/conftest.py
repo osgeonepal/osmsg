@@ -65,8 +65,9 @@ def populated_db_factory():
         conn.execute(
             """
             INSERT INTO changesets
-            VALUES (1, 10, '2026-04-01 10:00:00+00', ['#mapathon'], 'iD', 85.0, 27.0, 85.5, 27.5),
-                   (2, 20, '2026-04-02 09:00:00+00', NULL, 'JOSM', NULL, NULL, NULL, NULL)
+            VALUES (1, 10, '2026-04-01 10:00:00+00', ['#mapathon'], 'iD',
+                        ST_MakeEnvelope(85.0, 27.0, 85.5, 27.5)),
+                   (2, 20, '2026-04-02 09:00:00+00', NULL, 'JOSM', NULL)
             """
         )
         conn.execute(
@@ -87,8 +88,7 @@ def changefile_config():
     return {
         "hashtags": None,
         "additional_tags": ["building", "highway"],
-        "all_tags": False,
-        "key_value": False,
+        "tag_mode": "none",
         "length": None,
         "exact_lookup": False,
         "changeset_meta": False,

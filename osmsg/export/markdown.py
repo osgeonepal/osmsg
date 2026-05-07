@@ -57,7 +57,7 @@ def summary_markdown(
     end_date,
     additional_tags: list[str] | None = None,
     length_tags: list[str] | None = None,
-    all_tags: bool = False,
+    tag_mode: str = "none",
     fname: str = "stats",
     tm_stats: bool = False,
 ) -> Path:
@@ -124,7 +124,7 @@ def summary_markdown(
         total_m = sum(int(r.get(f"{k}_len_m", 0) or 0) for r in rows)
         parts.append(f"- {k} length created: {_human(round(total_m / 1000))} km")
 
-    if all_tags:
+    if tag_mode != "none":
         merged_create: dict[str, int] = {}
         merged_modify: dict[str, int] = {}
         for r in rows:

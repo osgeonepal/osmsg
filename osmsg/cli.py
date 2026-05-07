@@ -148,8 +148,14 @@ def main(
     formats: Annotated[list[Format] | None, typer.Option("--format", "-f", help="One or more output formats.")] = None,
     summary: Annotated[bool, typer.Option(help="Also write <name>_summary.parquet + summary.md.")] = False,
     changeset: Annotated[bool, typer.Option(hidden=True)] = False,
-    all_tags: Annotated[bool, typer.Option("--all-tags", help="Track every tag key.")] = False,
-    key_value: Annotated[bool, typer.Option("--key-value", help="Store key=value combos. Implies --all-tags.")] = False,
+    all_stats: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Collect all tag key=value stats and changeset metadata (hashtags, editors).",
+        ),
+    ] = False,
+    keys_only: Annotated[bool, typer.Option("--keys", help="Collect tag key stats only (no value breakdown).")] = False,
     exact_lookup: Annotated[
         bool, typer.Option("--exact-lookup", help="Hashtag whole-word match. Only meaningful with --hashtags.")
     ] = False,
@@ -205,8 +211,7 @@ def main(
         hashtags=hashtags,
         length_tags=length,
         users_filter=users,
-        all_tags=all_tags or key_value,
-        key_value=key_value,
+        tag_mode="all" if all_stats else ("keys" if keys_only else "none"),
         exact_lookup=exact_lookup,
         changeset=changeset,
         summary=summary,

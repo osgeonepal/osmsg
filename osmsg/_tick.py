@@ -1,9 +1,8 @@
 """Worker tick: bootstrap on first run, --update thereafter."""
 
-from __future__ import annotations
-
 import fcntl
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -23,19 +22,23 @@ def _has_state(db_path: Path, source_url: str) -> bool:
     return result
 
 
+def _parse_arg(args: list[str], flag: str) -> str | None:
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
 def main() -> int:
-    name = os.environ.get("OSMSG_NAME", "stats")
-    out = Path(os.environ.get("OSMSG_OUTPUT_DIR", "/var/lib/osmsg"))
-    cache = Path(os.environ.get("OSMSG_CACHE_DIR", "/var/cache/osmsg"))
-    country = os.environ.get("OSMSG_COUNTRY")
-    url = os.environ.get("OSMSG_URL", "minute")
-    boundary = os.environ.get("OSMSG_BOUNDARY")
+    extra_args = shlex.split(os.environ.get("OSMSG_EXTRA_ARGS", ""))
     bootstrap = os.environ.get("OSMSG_BOOTSTRAP", "hour")
     bootstrap_days = os.environ.get("OSMSG_BOOTSTRAP_DAYS")
-    psql_dsn = os.environ.get("DATABASE_URL")
+    name = _parse_arg(extra_args, "--name") or "stats"
+    out = Path(_parse_arg(extra_args, "--output-dir") or "/var/lib/osmsg")
+    country = _parse_arg(extra_args, "--country")
+    url = _parse_arg(extra_args, "--url") or "minute"
 
     out.mkdir(parents=True, exist_ok=True)
-    cache.mkdir(parents=True, exist_ok=True)
 
     lock_path = out / f"{name}.lock"
     lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
@@ -45,28 +48,13 @@ def main() -> int:
         print("[osmsg-tick] previous tick still running, skipping", flush=True)
         return 0
 
+    source_url = country_update_url(country) if country else resolve_url(url)
     db_path = out / f"{name}.duckdb"
-    cmd = [
-        "osmsg",
-        "--name",
-        name,
-        "--output-dir",
-        str(out),
-        "--cache-dir",
-        str(cache),
-    ]
-    if country:
-        cmd.extend(["--country", country])
-        source_url = country_update_url(country)
-    else:
-        cmd.extend(["--url", url])
-        source_url = resolve_url(url)
-    if boundary:
-        cmd.extend(["--boundary", boundary])
-    if psql_dsn:
-        cmd.extend(["--format", "psql", "--psql-dsn", psql_dsn])
-    else:
-        cmd.extend(["--format", "parquet"])
+
+    extra_set = set(extra_args)
+    cmd = ["osmsg"] + extra_args
+    if not (extra_set & {"--all", "--keys"}):
+        cmd.append("--all")
 
     if _has_state(db_path, source_url):
         cmd.append("--update")

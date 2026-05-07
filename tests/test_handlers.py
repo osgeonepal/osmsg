@@ -554,7 +554,7 @@ def test_changefile_handler_tracks_specified_tag_keys(osc_factory, changefile_co
 
 
 def test_changefile_handler_all_tags_captures_everything(osc_factory, changefile_config):
-    changefile_config["all_tags"] = True
+    changefile_config["tag_mode"] = "all"
     changefile_config["additional_tags"] = None
     osc = osc_factory(
         "005.osc",

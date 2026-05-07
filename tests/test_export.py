@@ -93,7 +93,7 @@ def test_summary_markdown_writes_top_users_and_totals(tmp_path: Path):
         output_path=tmp_path / "stats_summary.md",
         start_date="2026-04-01",
         end_date="2026-04-02",
-        all_tags=True,
+        tag_mode="all",
         fname="stats",
     )
     body = out.read_text()

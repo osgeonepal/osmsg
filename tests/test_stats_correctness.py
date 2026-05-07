@@ -62,7 +62,7 @@ def _flush(handler: ChangefileHandler, parquet_dir, pid: int = 1, batch: int = 1
 
 def test_user_stats_match_hand_counted_changes(tmp_path, osc_factory, changefile_config):
     """Build a deterministic .osc, run the full pipeline, assert every counter."""
-    changefile_config["all_tags"] = True
+    changefile_config["tag_mode"] = "all"
     changefile_config["additional_tags"] = None
 
     osc = osc_factory(

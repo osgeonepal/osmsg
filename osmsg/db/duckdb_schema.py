@@ -9,10 +9,7 @@ CREATE TABLE IF NOT EXISTS changesets (
     created_at   TIMESTAMPTZ,
     hashtags     VARCHAR[],
     editor       VARCHAR,
-    min_lon      DOUBLE,
-    min_lat      DOUBLE,
-    max_lon      DOUBLE,
-    max_lat      DOUBLE
+    geom         GEOMETRY
 );
 CREATE INDEX IF NOT EXISTS idx_changesets_created_at ON changesets(created_at);
 CREATE TABLE IF NOT EXISTS changeset_stats (

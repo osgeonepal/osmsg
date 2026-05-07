@@ -1,4 +1,5 @@
 PG_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS users (
     uid      BIGINT PRIMARY KEY,
     username TEXT NOT NULL
@@ -9,12 +10,10 @@ CREATE TABLE IF NOT EXISTS changesets (
     created_at   TIMESTAMPTZ,
     hashtags     TEXT[],
     editor       TEXT,
-    min_lon      DOUBLE PRECISION,
-    min_lat      DOUBLE PRECISION,
-    max_lon      DOUBLE PRECISION,
-    max_lat      DOUBLE PRECISION
+    geom         GEOMETRY(POLYGON)
 );
 CREATE INDEX IF NOT EXISTS idx_changesets_created_at ON changesets(created_at);
+CREATE INDEX IF NOT EXISTS idx_changesets_geom ON changesets USING GIST (geom);
 CREATE TABLE IF NOT EXISTS changeset_stats (
     changeset_id   BIGINT NOT NULL REFERENCES changesets(changeset_id),
     seq_id         BIGINT NOT NULL,

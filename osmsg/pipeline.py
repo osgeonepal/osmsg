@@ -56,8 +56,7 @@ class RunConfig:
     hashtags: list[str] | None = None
     length_tags: list[str] | None = None
     users_filter: list[str] | None = None
-    all_tags: bool = False
-    key_value: bool = False
+    tag_mode: str = "none"
     exact_lookup: bool = False
     changeset: bool = False
     summary: bool = False
@@ -181,8 +180,7 @@ def _processing_config(cfg: RunConfig, *, parquet_dir: Path, geom_wkt: str | Non
     return {
         "hashtags": cfg.hashtags,
         "additional_tags": cfg.additional_tags,
-        "all_tags": cfg.all_tags,
-        "key_value": cfg.key_value,
+        "tag_mode": cfg.tag_mode,
         "length": cfg.length_tags,
         "exact_lookup": cfg.exact_lookup,
         "changeset_meta": cfg.changeset,
@@ -303,8 +301,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         cfg.changeset = cfg.changeset or not cfg.hashtags
         geom_wkt = (unary_union(geoms) if len(geoms) > 1 else geoms[0]).wkt
 
-    # summary/tm_stats read the changesets table — populate it even if user didn't ask.
-    if (cfg.tm_stats or cfg.summary) and not cfg.changeset and not cfg.hashtags:
+    # summary/tm_stats/--all read the changesets table — populate it even if user didn't ask.
+    if (cfg.tm_stats or cfg.summary or cfg.tag_mode == "all") and not cfg.changeset and not cfg.hashtags:
         cfg.changeset = True
 
     max_workers = cfg.workers or _cpu_count()
@@ -416,13 +414,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     if cfg.changeset or cfg.hashtags:
         attach_metadata(conn, rows)
-    if cfg.additional_tags or cfg.all_tags or cfg.length_tags:
+    if cfg.additional_tags or cfg.tag_mode != "none" or cfg.length_tags:
         attach_tag_stats(
             conn,
             rows,
             additional_tags=cfg.additional_tags,
-            all_tags=cfg.all_tags,
-            key_value=cfg.key_value,
+            tag_mode=cfg.tag_mode,
             length_tags=cfg.length_tags,
         )
 
@@ -449,7 +446,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             end_date=end_date_utc,
             additional_tags=cfg.additional_tags,
             length_tags=cfg.length_tags,
-            all_tags=cfg.all_tags,
+            tag_mode=cfg.tag_mode,
             fname=cfg.name,
             tm_stats=cfg.tm_stats,
         )
@@ -460,8 +457,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         summary_rows = daily_summary(
             conn,
             additional_tags=cfg.additional_tags,
-            all_tags=cfg.all_tags,
-            key_value=cfg.key_value,
+            tag_mode=cfg.tag_mode,
             length_tags=cfg.length_tags,
         )
     if summary_rows:
@@ -480,7 +476,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 end_date=end_date_utc,
                 additional_tags=cfg.additional_tags,
                 length_tags=cfg.length_tags,
-                all_tags=cfg.all_tags,
+                tag_mode=cfg.tag_mode,
                 fname=cfg.name,
                 tm_stats=cfg.tm_stats,
             )

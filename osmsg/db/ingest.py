@@ -114,11 +114,14 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
         if any(parquet_dir.glob("temp_*_users_*.parquet")):
             conn.execute(f"INSERT OR IGNORE INTO users SELECT uid, username FROM read_parquet('{pattern('users')}')")
         if any(parquet_dir.glob("temp_*_changesets_*.parquet")):
+            conn.execute("LOAD spatial")
             conn.execute(
                 f"""
                 INSERT OR IGNORE INTO changesets
                 SELECT changeset_id, uid, created_at, hashtags, editor,
-                       min_lon, min_lat, max_lon, max_lat
+                       CASE WHEN min_lon IS NOT NULL
+                           THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat)
+                       END
                 FROM read_parquet('{pattern("changesets")}')
                 """
             )
