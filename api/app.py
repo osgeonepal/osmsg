@@ -11,6 +11,24 @@ from .db import close_pool, ensure_schema, open_pool
 from .queries import fetch_user_stats
 
 
+def normalize_hashtags(hashtag: list[str] | None) -> list[str] | None:
+    if not hashtag:
+        return None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in hashtag:
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        cleaned = "#" + cleaned.lstrip("#")
+        key = cleaned.lower()
+        if key not in seen:
+            normalized.append(cleaned)
+            seen.add(key)
+    return normalized or None
+
+
 @asynccontextmanager
 async def lifespan(app: Litestar):
     await open_pool()
@@ -37,12 +55,13 @@ async def get_user_stats(
     if start >= end:
         raise HTTPException(status_code=400, detail="start must be before end")
 
-    users = await fetch_user_stats(start=start, end=end, hashtag=hashtag, limit=limit, offset=offset)
+    normalized_hashtag = normalize_hashtags(hashtag)
+    users = await fetch_user_stats(start=start, end=end, hashtag=normalized_hashtag, limit=limit, offset=offset)
     return {
         "count": len(users),
         "start": start.isoformat(),
         "end": end.isoformat(),
-        "hashtag": hashtag,
+        "hashtag": normalized_hashtag,
         "limit": limit,
         "offset": offset,
         "users": users,
