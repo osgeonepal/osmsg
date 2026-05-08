@@ -43,4 +43,5 @@ class UserStatsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     last_seq: int | None
-    last_updated: datetime | None
+    last_ts: datetime | None
+    updated_at: datetime | None

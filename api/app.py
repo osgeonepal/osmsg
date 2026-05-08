@@ -41,7 +41,8 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         last_seq=state["last_seq"] if state else None,
-        last_updated=state["last_ts"] if state else None,
+        last_ts=state["last_ts"] if state else None,
+        updated_at=state["updated_at"] if state else None,
     )
 
 
