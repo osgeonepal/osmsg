@@ -103,8 +103,13 @@ def changefile_download_urls(
 class ChangesetReplication:
     """Planet changeset replication URL helper."""
 
-    def __init__(self, base_url: str = CHANGESETS_REPLICATION) -> None:
+    # OSM caps changeset open time at 24h, so 24 is the maximum useful pad. Default 1h
+    # keeps first-run bootstraps cheap; see README "Configuration" for when to raise it.
+    DEFAULT_PAD_HOURS = 1
+
+    def __init__(self, base_url: str = CHANGESETS_REPLICATION, *, pad_hours: int = DEFAULT_PAD_HOURS) -> None:
         self.base = base_url
+        self.pad_min = pad_hours * 60
 
     def _state(self) -> tuple[int, datetime]:
         txt = session.get(self.base + "state.yaml").text
@@ -131,21 +136,30 @@ class ChangesetReplication:
         txt = session.get(self.state_url(seq)).text
         return datetime.strptime(txt.split("last_run: ")[1][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
 
-    # OSM caps changeset open time at 24h, so a still-open changeset created up to
-    # 24h before start_date can still have its first edits land in our window.
-    # Smaller pads silently lose those long-runners' metadata (and hence their edits,
-    # which get filtered out by valid_changesets).
-    BACKWARD_PAD_MIN = 24 * 60
+    def download_urls(
+        self,
+        start_date: datetime,
+        end_date: datetime | None = None,
+        *,
+        resume_seq: int | None = None,
+    ) -> tuple[list[str], int, int]:
+        """Resolve [start_seq, end_seq] for the requested window.
 
-    def download_urls(self, start_date: datetime, end_date: datetime | None = None) -> tuple[list[str], int, int]:
-        start_seq = self.timestamp_to_sequence(start_date)
-        start_ts = self.sequence_to_timestamp(start_seq)
-        if start_ts > start_date:
-            start_seq -= int((start_ts - start_date).total_seconds() / 60)
+        When ``resume_seq`` is provided (the --update fast path), we trust prior state:
+        every changeset whose minute-diff sequence is < resume_seq has already been
+        captured in the changesets table, so we skip the backward pad entirely.
+        """
+        if resume_seq is not None:
+            start_seq = resume_seq
+        else:
+            start_seq = self.timestamp_to_sequence(start_date)
             start_ts = self.sequence_to_timestamp(start_seq)
-        if start_date > start_ts and (start_date - start_ts).seconds != 15 * 60:
-            start_seq += int((start_date - start_ts).total_seconds() / 60)
-        start_seq -= self.BACKWARD_PAD_MIN
+            if start_ts > start_date:
+                start_seq -= int((start_ts - start_date).total_seconds() / 60)
+                start_ts = self.sequence_to_timestamp(start_seq)
+            if start_date > start_ts and (start_date - start_ts).seconds != 15 * 60:
+                start_seq += int((start_date - start_ts).total_seconds() / 60)
+            start_seq -= self.pad_min
 
         cur_seq, last_run = self._state()
         if end_date is None or end_date > last_run:

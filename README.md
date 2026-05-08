@@ -137,6 +137,29 @@ Any flag works as a YAML key. See [docs/Manual.md](./docs/Manual.md) for the ful
 Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus the formats you ask for via
 `-f parquet|csv|json|markdown|psql`. Parquet is the default. Open it with duckdb, polars, pandas, anything.
 
+## Configuration
+
+Every meaningful flag has a matching `OSMSG_*` env var so the CLI, a `.env` file, and a
+docker-compose `environment:` block all reach the same setting. CLI flag wins over env var.
+
+| CLI flag | Env var | Default | Notes |
+| --- | --- | --- | --- |
+| `--name` | `OSMSG_NAME` | `stats` | Output basename; sets `<name>.duckdb`. |
+| `--country` | `OSMSG_COUNTRY` | unset | Geofabrik region id(s). Comma-separated when set via env. |
+| `--boundary` | `OSMSG_BOUNDARY` | unset | GeoJSON path or inline GeoJSON. |
+| `--url` | `OSMSG_URL` | `minute` | `minute`/`hour`/`day` shortcut or full URL. Comma-separated when set via env. |
+| `--workers` | `OSMSG_WORKERS` | cpu count | Parallel workers. |
+| `--cache-dir` | `OSMSG_CACHE_DIR` | platform cache | Where downloaded OSM files are kept across runs. |
+| `--output-dir` | `OSMSG_OUTPUT_DIR` | `.` | Where `<name>.duckdb` and exports are written. |
+| `--format` / `-f` | `OSMSG_FORMAT` | `parquet` | Repeat for multiple. Comma-separated when set via env. |
+| `--psql-dsn` | `OSMSG_PSQL_DSN` | unset | libpq DSN for `-f psql`. |
+| `--changeset-pad-hours` | `OSMSG_CHANGESET_PAD_HOURS` | `1` | See below. |
+| (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP` | `hour` | `hour`, `day`, or `week`. Used when `--update` runs against an empty DB. |
+| (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP_DAYS` | unset | Integer N; overrides `OSMSG_BOOTSTRAP`. |
+| OSM credentials (Geofabrik) | `OSM_USERNAME`, `OSM_PASSWORD` | unset | Required only when a Geofabrik URL is in use. |
+
+A `.env` file at the working directory is loaded automatically.
+
 ## Documentation
 
 - [Installation](./docs/Installation.md)

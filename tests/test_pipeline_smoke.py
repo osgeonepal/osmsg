@@ -13,12 +13,16 @@ from osmsg.exceptions import OsmsgError
 from osmsg.pipeline import (
     RunConfig,
     _auto_switch_replication,
+    _bootstrap_window_start,
     _canonical_hashtags,
+    _needs_changefile_changeset_filter,
     _normalize_urls,
     _pick_replication_for_span,
     _resolve_url_starts,
 )
-from osmsg.replication import SHORTCUTS
+from osmsg.replication import CHANGESETS_REPLICATION, SHORTCUTS, ChangesetReplication
+
+PLANET_MINUTE = "https://planet.openstreetmap.org/replication/minute"
 
 
 def test_normalize_urls_expands_minute_shortcut():
@@ -121,38 +125,104 @@ def test_resolve_url_starts_update_resume_seq_is_last_seq_plus_one(tmp_path):
 
 
 def test_resolve_url_starts_update_missing_state_raises_per_url(tmp_path):
+    """Partial state must raise: auto-bootstrap is for empty DBs only, never for a mix."""
     conn = _open_db(tmp_path)
-    upsert_state(
-        conn,
-        source_url="https://x",
-        last_seq=1,
-        last_ts=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
-        updated_at=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
-    )
+    ts = dt.datetime(2026, 4, 25, tzinfo=dt.UTC)
+    upsert_state(conn, source_url="https://x", last_seq=1, last_ts=ts, updated_at=ts)
     cfg = RunConfig(urls=["https://x", "https://y"], update=True)
     with pytest.raises(OsmsgError, match="no prior state for https://y"):
         _resolve_url_starts(conn, cfg)
 
 
-def test_resolve_url_starts_update_error_lists_known_urls_and_invariant(tmp_path):
-    """The error must surface (a) which URLs are seeded and (b) the seq_id double-count rationale —
-    so the user knows their two recovery options without spelunking the source."""
+def test_resolve_url_starts_update_different_url_raises_with_recovery_hint(tmp_path):
+    """State for a different URL must raise: switching granularity would double-count
+    via (seq_id, changeset_id). The error message names the known URL so the user can recover."""
     conn = _open_db(tmp_path)
-    upsert_state(
-        conn,
-        source_url="https://planet.openstreetmap.org/replication/minute",
-        last_seq=1,
-        last_ts=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
-        updated_at=dt.datetime(2026, 4, 25, tzinfo=dt.UTC),
-    )
+    ts = dt.datetime(2026, 4, 25, tzinfo=dt.UTC)
+    upsert_state(conn, source_url=PLANET_MINUTE, last_seq=1, last_ts=ts, updated_at=ts)
     cfg = RunConfig(urls=["https://planet.openstreetmap.org/replication/day"], update=True)
     with pytest.raises(OsmsgError) as exc:
         _resolve_url_starts(conn, cfg)
     msg = str(exc.value)
-    assert "Existing state in this DuckDB is for" in msg
-    assert "minute" in msg  # known URL surfaced
-    assert "different --name" in msg  # recovery hint
-    assert "seq_id" in msg  # invariant referenced
+    for fragment in ("Existing state in this DuckDB is for", "minute", "different --name", "seq_id"):
+        assert fragment in msg
+
+
+def test_resolve_url_starts_update_empty_db_bootstraps_one_hour(tmp_path, capsys):
+    """Fresh DB plus --update auto-seeds start = now - 1h instead of erroring."""
+    conn = _open_db(tmp_path)
+    cfg = RunConfig(urls=[PLANET_MINUTE], update=True)
+    before = dt.datetime.now(dt.UTC)
+    starts = _resolve_url_starts(conn, cfg)
+    after = dt.datetime.now(dt.UTC)
+
+    ts, resume_seq = starts[PLANET_MINUTE]
+    assert resume_seq is None
+    assert before - dt.timedelta(hours=1, seconds=1) <= ts <= after - dt.timedelta(hours=1) + dt.timedelta(seconds=1)
+    assert "no prior state" in capsys.readouterr().out
+
+
+def test_bootstrap_honors_osmsg_bootstrap_env(tmp_path, monkeypatch):
+    """OSMSG_BOOTSTRAP=day shifts the auto-bootstrap window from 1h to 24h."""
+    monkeypatch.setenv("OSMSG_BOOTSTRAP", "day")
+    conn = _open_db(tmp_path)
+    starts = _resolve_url_starts(conn, RunConfig(urls=[PLANET_MINUTE], update=True))
+    age = dt.datetime.now(dt.UTC) - starts[PLANET_MINUTE][0]
+    assert dt.timedelta(hours=23, minutes=59) < age < dt.timedelta(hours=24, minutes=1)
+
+
+def test_bootstrap_honors_osmsg_bootstrap_days_env(tmp_path, monkeypatch):
+    """OSMSG_BOOTSTRAP_DAYS=N wins over the preset."""
+    monkeypatch.setenv("OSMSG_BOOTSTRAP_DAYS", "3")
+    monkeypatch.setenv("OSMSG_BOOTSTRAP", "hour")
+    conn = _open_db(tmp_path)
+    starts = _resolve_url_starts(conn, RunConfig(urls=[PLANET_MINUTE], update=True))
+    age = dt.datetime.now(dt.UTC) - starts[PLANET_MINUTE][0]
+    assert dt.timedelta(days=2, hours=23) < age < dt.timedelta(days=3, hours=1)
+
+
+def test_bootstrap_ignores_changeset_replication_state_row(tmp_path):
+    """The changesets-replication state row is internal bookkeeping and must not block
+    the bootstrap path: we only refuse fresh starts when *user-facing* state exists."""
+    conn = _open_db(tmp_path)
+    ts = dt.datetime(2026, 4, 25, tzinfo=dt.UTC)
+    upsert_state(conn, source_url=CHANGESETS_REPLICATION, last_seq=999_999, last_ts=ts, updated_at=ts)
+    starts = _resolve_url_starts(conn, RunConfig(urls=[PLANET_MINUTE], update=True))
+    ts, resume_seq = starts[PLANET_MINUTE]
+    assert resume_seq is None
+    assert dt.datetime.now(dt.UTC) - ts < dt.timedelta(hours=2)
+
+
+def test_bootstrap_window_start_default_is_one_hour():
+    now = dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.UTC)
+    assert _bootstrap_window_start(now) == now - dt.timedelta(hours=1)
+
+
+def test_runconfig_default_changeset_pad_is_one_hour():
+    assert RunConfig().changeset_pad_hours == 1
+
+
+def test_runconfig_changeset_pad_hours_round_trips_to_replication():
+    """The CLI/env value must reach ChangesetReplication unchanged."""
+    cfg = RunConfig(changeset_pad_hours=24)
+    assert ChangesetReplication(pad_hours=cfg.changeset_pad_hours).pad_min == 24 * 60
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        ({"hashtags": ["#hotosm"]}, True),
+        ({"boundary": "/tmp/x.geojson"}, True),
+        ({"countries": ["nepal"]}, True),
+        ({"countries": ["nepal", "india"]}, True),
+        ({}, False),
+        ({"changeset": True}, False),
+    ],
+)
+def test_needs_changefile_changeset_filter(kwargs, expected):
+    """Predicate-level guard: hashtags OR boundary OR countries must trigger the metadata
+    allowlist. Omitting countries silently leaks global changefile stubs into a country DB."""
+    assert _needs_changefile_changeset_filter(RunConfig(**kwargs)) is expected
 
 
 @pytest.mark.parametrize(

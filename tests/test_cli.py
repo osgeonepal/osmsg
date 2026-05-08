@@ -6,6 +6,7 @@ resolution, mutual-exclusion checks, and error paths.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import click
@@ -46,8 +47,13 @@ def test_time_range_flags_are_mutually_exclusive(args):
 
 
 def test_changeset_flag_is_hidden_in_help():
+    """The bare --changeset toggle is internal (set automatically when needed). Sibling
+    flags that legitimately start with --changeset- (e.g. --changeset-pad-hours) are
+    user-facing and may appear; only the bare toggle must stay hidden."""
     result = runner.invoke(app, ["--help"])
-    assert "--changeset" not in click.unstyle(result.stdout)
+    plain = click.unstyle(result.stdout)
+    # Match the bare flag with a trailing space or end-of-arg, not its --changeset-* siblings.
+    assert not re.search(r"--changeset(\s|,|$)", plain), "bare --changeset toggle leaked into --help"
 
 
 def test_password_flag_no_longer_accepted():

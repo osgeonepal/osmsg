@@ -25,7 +25,13 @@ from .exceptions import CredentialsRequiredError, NoDataFoundError, OsmsgError
 from .export import summary_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
 from .geofabrik import country_geometry, country_update_url
-from .replication import SHORTCUTS, ChangesetReplication, changefile_download_urls, resolve_url
+from .replication import (
+    CHANGESETS_REPLICATION,
+    SHORTCUTS,
+    ChangesetReplication,
+    changefile_download_urls,
+    resolve_url,
+)
 from .ui import info, progress_bar, warn
 
 UTC = dt.UTC
@@ -70,6 +76,7 @@ class RunConfig:
     osm_username: str | None = None
     osm_password: str | None = None
     psql_dsn: str | None = None
+    changeset_pad_hours: int = ChangesetReplication.DEFAULT_PAD_HOURS
 
 
 def _resolve_country_urls(countries: list[str]) -> list[str]:
@@ -119,20 +126,66 @@ def _canonical_hashtags(hashtags: list[str]) -> list[str]:
     return ["#" + h.lstrip("#") for h in hashtags]
 
 
+def _needs_changefile_changeset_filter(cfg: RunConfig) -> bool:
+    # When any metadata-side filter is on, ChangefileHandler must drop edits whose
+    # changeset_id isn't in the allowlist; otherwise stub rows for global changesets
+    # pollute the changesets table.
+    return bool(cfg.hashtags or cfg.boundary or cfg.countries)
+
+
+def _resolve_valid_changesets(conn, cfg: RunConfig) -> set[int] | None:
+    # None means "no allowlist, keep everything"; a set means "drop edits to changesets
+    # not in this set". The set is whatever ChangesetHandler already filtered into the
+    # changesets table earlier in the run.
+    if not _needs_changefile_changeset_filter(cfg):
+        return None
+    return set(list_changesets(conn))
+
+
+_BOOTSTRAP_PRESETS = {
+    "hour": dt.timedelta(hours=1),
+    "day": dt.timedelta(days=1),
+    "week": dt.timedelta(days=7),
+}
+
+
+def _bootstrap_window_start(now: dt.datetime | None = None) -> dt.datetime:
+    """Resolve the auto-bootstrap start_date for a fresh --update.
+
+    OSMSG_BOOTSTRAP_DAYS=N wins over OSMSG_BOOTSTRAP=hour|day|week. Defaults to one hour,
+    matching the worker tick in osmsg/_tick.py.
+    """
+    now = now or dt.datetime.now(UTC)
+    days_env = os.environ.get("OSMSG_BOOTSTRAP_DAYS")
+    if days_env:
+        return now - dt.timedelta(days=int(days_env))
+    preset = os.environ.get("OSMSG_BOOTSTRAP", "hour")
+    return now - _BOOTSTRAP_PRESETS.get(preset, _BOOTSTRAP_PRESETS["hour"])
+
+
 def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, tuple[dt.datetime, int | None]]:
     """Per-URL (start_ts, resume_seq); resume_seq is set only on --update."""
     if cfg.update:
         if not cfg.urls:
             raise OsmsgError("--update requires at least one source URL.")
+
+        all_known = [r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()]
+        known_user_sources = [u for u in all_known if u != CHANGESETS_REPLICATION]
+        per_url_state = {url: get_state(conn, url) for url in cfg.urls}
+        if not known_user_sources and all(s is None for s in per_url_state.values()):
+            bootstrap_start = _bootstrap_window_start()
+            info(
+                f"--update: no prior state, bootstrapping from {bootstrap_start.isoformat()} "
+                "(set OSMSG_BOOTSTRAP=hour|day|week or OSMSG_BOOTSTRAP_DAYS=N to change)."
+            )
+            return {url: (bootstrap_start, None) for url in cfg.urls}
         starts: dict[str, tuple[dt.datetime, int | None]] = {}
-        for url in cfg.urls:
-            last = get_state(conn, url)
+        for url, last in per_url_state.items():
             if not last:
-                known = [r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()]
                 hint = (
-                    f" Existing state in this DuckDB is for: {', '.join(known)}. "
+                    f" Existing state in this DuckDB is for: {', '.join(known_user_sources)}. "
                     "Re-run --update with one of those URLs, or start fresh under a different --name."
-                    if known
+                    if known_user_sources
                     else " Run osmsg once without --update to seed state."
                 )
                 raise OsmsgError(
@@ -277,7 +330,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     if cfg.update:
         # Changeset-replication reads one planet-wide source; widest window covers every URL.
         cfg.start_date = min(ts for ts, _seq in url_starts.values())
-        info(f"--update: resuming each source from its own state row (earliest: {cfg.start_date.isoformat()})")
+        info(
+            "--update: resuming each source from its own state row "
+            f"(earliest: {cfg.start_date.astimezone(UTC).isoformat()})"
+        )
 
     # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
     assert cfg.start_date is not None
@@ -285,7 +341,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         raise OsmsgError("start_date >= end_date — nothing to do.")
 
     span = cfg.end_date - cfg.start_date
-    info(f"Range: {cfg.start_date.isoformat()} → {cfg.end_date.isoformat()} ({span})")
+    info(f"Range: {cfg.start_date.astimezone(UTC).isoformat()} → {cfg.end_date.astimezone(UTC).isoformat()} ({span})")
     span_hours = span.total_seconds() / 3600
     # When auto-switch was suppressed (--url explicit, --update, --country, multi-URL), a long
     # span on minute replication still floods the network. Hint the user.
@@ -317,9 +373,16 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     end_seq: int | None = None
 
     if cfg.hashtags or cfg.changeset:
-        cs_repl = ChangesetReplication()
-        urls, cs_start, cs_end = cs_repl.download_urls(cfg.start_date, cfg.end_date)
-        info(f"Changesets: {len(urls)} files (seq {cs_start}–{cs_end})")
+        cs_repl = ChangesetReplication(pad_hours=cfg.changeset_pad_hours)
+        cs_state = get_state(conn, CHANGESETS_REPLICATION) if cfg.update else None
+        cs_resume_seq = (cs_state["last_seq"] + 1) if cs_state else None
+        urls, cs_start, cs_end = cs_repl.download_urls(cfg.start_date, cfg.end_date, resume_seq=cs_resume_seq)
+        pad_note = (
+            f"incremental from prior state seq {cs_state['last_seq']} (no backward pad)"
+            if cs_state
+            else f"first run with {cfg.changeset_pad_hours}h backward pad"
+        )
+        info(f"Changesets: {len(urls)} files (seq {cs_start}-{cs_end}), {pad_note}.")
 
         if urls:
             cs_dir.mkdir(parents=True, exist_ok=True)
@@ -341,10 +404,16 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 description="Processing changesets",
             )
             dbmod.merge_parquet_files(conn, cs_dir, cleanup=True)
+            upsert_state(
+                conn,
+                source_url=CHANGESETS_REPLICATION,
+                last_seq=cs_end,
+                last_ts=cfg.end_date.astimezone(UTC),
+                updated_at=dt.datetime.now(UTC),
+            )
             info("Changeset processing complete.")
 
-        if cfg.hashtags or cfg.boundary:
-            valid_changesets = set(list_changesets(conn))
+        valid_changesets = _resolve_valid_changesets(conn, cfg)
 
     end_date_utc = cfg.end_date.astimezone(UTC)
 
@@ -361,6 +430,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         url_end_date = min(cfg.end_date, server_ts)
         url_start_date_utc = url_start.astimezone(UTC)
         url_end_date_utc = url_end_date.astimezone(UTC)
+
+        gap = server_ts - url_start_date_utc
+        info(
+            f"  DB current to: {url_start_date_utc.isoformat()}  |  "
+            f"server head: {server_ts.isoformat()}  |  gap: {gap}  |  files: {len(urls)}"
+        )
 
         if not urls:
             info(f"  {url}: already up-to-date")
@@ -401,6 +476,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             last_ts=url_end_date,
             updated_at=dt.datetime.now(UTC),
         )
+        lag = server_ts - url_end_date_utc
+        info(f"  DB now current to: {url_end_date_utc.isoformat()}  |  lag from server: {lag}")
         info(f"Changefile processing complete: {url}")
 
     if cfg.delete_temp:

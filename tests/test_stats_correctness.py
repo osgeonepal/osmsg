@@ -10,23 +10,31 @@
 from __future__ import annotations
 
 import duckdb
+import pytest
+from shapely.geometry import box
 
 from osmsg.db.ingest import flush_rows_to_parquet, merge_parquet_files
 from osmsg.db.queries import attach_metadata, list_changesets, user_stats
 from osmsg.db.schema import create_tables
 from osmsg.handlers import ChangefileHandler, ChangesetHandler
+from osmsg.pipeline import RunConfig, _resolve_valid_changesets
 
 
 def _write_changeset_xml(tmp_path, name, changesets):
+    """Pass `bbox=(min_lon, min_lat, max_lon, max_lat)` to emit min_*/max_* attributes
+    that ChangesetHandler's geom filter can intersect-test against."""
     parts = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6">']
     for cs in changesets:
-        parts.append(
-            f'  <changeset id="{cs["id"]}" '
-            f'created_at="{cs.get("created_at", "2026-04-27T20:00:00Z")}" '
+        attrs = (
+            f'id="{cs["id"]}" created_at="{cs.get("created_at", "2026-04-27T20:00:00Z")}" '
             f'closed_at="{cs.get("closed_at", "2026-04-27T21:00:00Z")}" open="false" '
             f'num_changes="{cs.get("num_changes", 1)}" user="{cs.get("user", "alice")}" '
-            f'uid="{cs.get("uid", 10)}" comments_count="0">'
+            f'uid="{cs.get("uid", 10)}" comments_count="0"'
         )
+        if "bbox" in cs:
+            min_lon, min_lat, max_lon, max_lat = cs["bbox"]
+            attrs += f' min_lon="{min_lon}" min_lat="{min_lat}" max_lon="{max_lon}" max_lat="{max_lat}"'
+        parts.append(f"  <changeset {attrs}>")
         for k, v in cs.get("tags", {}).items():
             parts.append(f'    <tag k="{k}" v="{v}"/>')
         parts.append("  </changeset>")
@@ -572,3 +580,83 @@ def test_hashtag_filter_keeps_changeset_with_no_in_window_edits(tmp_path, change
     assert user_stats(db) == []
     cs_count = db.execute("SELECT COUNT(*) FROM changesets").fetchone()[0]
     assert cs_count == 1
+
+
+def test_country_filter_drops_non_country_edits_end_to_end(tmp_path, osc_factory, changefile_config):
+    """Full data-flow test for the --country boundary wiring."""
+    cs_xml = _write_changeset_xml(
+        tmp_path,
+        "cs_geo.osm",
+        [
+            {"id": 1, "user": "binod", "uid": 100, "bbox": (84.21, 27.60, 84.30, 27.65)},
+            {"id": 2, "user": "sita", "uid": 200, "bbox": (85.30, 27.70, 85.35, 27.72)},
+            {"id": 3, "user": "tanaka", "uid": 300, "bbox": (139.69, 35.68, 139.77, 35.71)},
+            {"id": 4, "user": "olivia", "uid": 400, "bbox": (-0.13, 51.49, -0.12, 51.51)},
+        ],
+    )
+    cs_h = ChangesetHandler(
+        {
+            "hashtags": None,
+            "exact_lookup": False,
+            "changeset_meta": True,
+            "whitelisted_users": [],
+            "geom_filter_wkt": box(80.0, 26.0, 89.0, 31.0).wkt,
+        }
+    )
+    cs_h.apply_file(str(cs_xml))
+    assert set(cs_h.changesets.keys()) == {1, 2}
+
+    db = duckdb.connect(str(tmp_path / "country.duckdb"))
+    create_tables(db)
+    _flush_changesets(cs_h, tmp_path / "cs_parq")
+    merge_parquet_files(db, tmp_path / "cs_parq", cleanup=False)
+
+    valid = _resolve_valid_changesets(db, RunConfig(countries=["nepal"]))
+    assert valid == {1, 2}
+
+    osc = osc_factory(
+        "global.osc",
+        [
+            (
+                "node",
+                {"id": 10, "version": 1, "uid": 100, "user": "binod", "changeset": 1, "tags": {"amenity": "cafe"}},
+            ),
+            ("node", {"id": 20, "version": 1, "uid": 200, "user": "sita", "changeset": 2, "tags": {"shop": "bakery"}}),
+            (
+                "node",
+                {"id": 30, "version": 1, "uid": 300, "user": "tanaka", "changeset": 3, "tags": {"amenity": "cafe"}},
+            ),
+            (
+                "node",
+                {"id": 40, "version": 1, "uid": 400, "user": "olivia", "changeset": 4, "tags": {"amenity": "pub"}},
+            ),
+        ],
+    )
+    cf_h = ChangefileHandler(changefile_config, sequence_id=1, valid_changesets=valid)
+    cf_h.apply_file(str(osc))
+    assert set(cf_h.stubs.keys()) == {1, 2}
+    assert set(cf_h.users.keys()) == {100, 200}
+
+    _flush(cf_h, tmp_path / "cf_parq", pid=2)
+    merge_parquet_files(db, tmp_path / "cf_parq", cleanup=False)
+
+    assert db.execute("SELECT COUNT(*) FROM changesets WHERE created_at IS NULL").fetchone()[0] == 0
+    assert {r["name"] for r in user_stats(db)} == {"binod", "sita"}
+
+
+@pytest.mark.parametrize(
+    "cfg,expected_ids",
+    [
+        (RunConfig(), None),
+        (RunConfig(hashtags=["#hotosm"]), {1, 2}),
+        (RunConfig(boundary="/tmp/x.geojson"), {1, 2}),
+        (RunConfig(countries=["nepal"]), {1, 2}),
+        (RunConfig(countries=["nepal"], boundary="/tmp/x.geojson"), {1, 2}),
+    ],
+)
+def test_resolve_valid_changesets_wiring(tmp_path, populated_db_factory, cfg, expected_ids):
+    """No filter -> None (keep everything); any filter -> the seeded changeset_ids."""
+    db = duckdb.connect(str(tmp_path / "wiring.duckdb"))
+    create_tables(db)
+    populated_db_factory(db)
+    assert _resolve_valid_changesets(db, cfg) == expected_ids
