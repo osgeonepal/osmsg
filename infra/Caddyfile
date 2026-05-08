@@ -1,3 +1,7 @@
+{
+    email {$OSMSG_ACME_EMAIL}
+}
+
 {$OSMSG_DOMAIN:localhost} {
     reverse_proxy api:8000
 }
