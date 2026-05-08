@@ -8,100 +8,54 @@
     </h2>
 
     <form
-      class="horizontal-form"
-      hx-get="/statistics"
-      hx-target="#results"
-      hx-swap="innerHTML"
-    >
-      <!-- Hashtag -->
-      <div class="form-group form-group-200">
-        <label class="form-label">
-          <span class="material-icons form-label-icon">tag</span>
-          Hashtag
-        </label>
-
-        <div class="input-wrapper">
+    class="horizontal-form"
+    hx-get="/statistics"
+    hx-target="#results"
+    hx-swap="innerHTML"
+  >
+    <div class="form-inputs-row">
+  
+      <div class="form-group form-group-300">
+        <label class="form-label" for="hashtag-input">Hashtags</label>
+        <div class="tag-search-wrapper" style="position: relative; border-bottom:none;">
           <input
             type="text"
-            name="hashtag"
-            id="hashtag"
-            placeholder="e.g. hotosm"
-            class="hashtag-input"
-            onfocus="document.getElementById('hashtag-dropdown').style.display='block'"
-            onblur="setTimeout(() => document.getElementById('hashtag-dropdown').style.display='none', 200)"
-            oninput="filterHashtags(this.value)"
+            id="hashtag-input"
+            placeholder="e.g.,hotosm, mapathon, htosm-project-1234.."
+            class="tag-chip-text"
+            autocomplete="off"
+            style=" width: 100%;"
           />
-
-          <span class="material-icons hashtag-icon"> expand_more </span>
-
-          <div id="hashtag-dropdown" class="hashtag-dropdown">
-            {% set popular_hashtags = [ 'OzonGeo', 'tt_event',
-            'AfricaMapCup2026', 'maproulette', 'msf', 'missingmaps', 'Aweil',
-            'MapComplete', 'tomtom', ] %} {% for hashtag in popular_hashtags %}
-
-            <div
-              onclick="document.getElementById('hashtag').value='{{ hashtag }}'; document.getElementById('hashtag-dropdown').style.display='none';"
-              class="hashtag-option"
-            >
-              <span class="material-icons hashtag-option-icon"> tag </span>
-
-              <span class="hashtag-option-text"> {{ hashtag }} </span>
-            </div>
-
-            {% endfor %}
-          </div>
+          <div id="tag-suggestions" class="tag-suggestions"></div>
         </div>
+        <div id="hashtag-hiddens"></div>
       </div>
-
-      <!-- Date Range -->
+  
       <div class="form-group form-group-300">
         <label class="form-label">
           <span class="material-icons form-label-icon">date_range</span>
           Date Range
         </label>
         <div class="date-wrapper">
-          <input
-            type="text"
-            id="daterange"
-            name="daterange"
-            placeholder="Select date range"
-            class="date-input"
-          />
+          <input type="text" id="daterange" name="daterange" placeholder="Select date range" class="date-input" />
           <div class="date-buttons">
-            <button
-              type="button"
-              class="i-btn"
-              onclick="setIntervalRange('daily')"
-              title="Last 24h"
-            >
-              D
-            </button>
-            <button
-              type="button"
-              class="i-btn"
-              onclick="setIntervalRange('weekly')"
-              title="Last 7 Days"
-            >
-              W
-            </button>
-            <button
-              type="button"
-              class="i-btn"
-              onclick="setIntervalRange('monthly')"
-              title="Last 30 Days"
-            >
-              M
-            </button>
+            <button type="button" class="i-btn" onclick="setIntervalRange('daily')" title="Last 24h">D</button>
+            <button type="button" class="i-btn" onclick="setIntervalRange('weekly')" title="Last 7 Days">W</button>
+            <button type="button" class="i-btn" onclick="setIntervalRange('monthly')" title="Last 30 Days">M</button>
           </div>
         </div>
       </div>
-
+  
       <button type="submit" class="search-btn search-submit-btn">
         <span class="material-icons search-submit-icon">query_stats</span>
         Get Statistics
       </button>
-    </form>
-
+  
+    </div>
+  
+    <div id="tag-chip-box" class="tag-chip-box"></div>
+  
+  </form>
     <div id="results"></div>
 
     <div class="results-info-grid">

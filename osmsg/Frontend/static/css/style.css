@@ -264,9 +264,8 @@ body {
 
 .horizontal-form {
     display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 1rem;
+    flex-direction: column;
+    gap: 0;
     margin: 0 0 2rem 0;
     padding: 1.5rem;
     background: white;
@@ -275,11 +274,20 @@ body {
     box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.08);
 }
 
+.form-inputs-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    gap: 1rem;
+    width: 100%;
+}
+
 .form-group {
     display: flex;
     flex-direction: column;
     flex: 1 1 180px;
     min-width: 140px;
+    position: relative;
 }
 
 .form-group label {
@@ -306,6 +314,27 @@ body {
     box-shadow: 0 0 0 3px rgba(43, 111, 75, 0.1);
 }
 
+.form-inputs-row .form-group:first-child {
+    flex: 0 0 380px;
+}
+
+.form-inputs-row .form-group:nth-child(2) {
+    flex: 1;
+}
+
+.tag-chip-box {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    min-height: 0;
+    transition: all 0.2s ease;
+}
+
+.tag-chip-box:empty {
+    margin-top: 0;
+}
+
 .search-btn {
     background: #2b6f4b;
     color: white;
@@ -321,6 +350,11 @@ body {
 
 .search-btn:hover {
     background: #1d543a;
+}
+
+.search-submit-btn {
+    flex-shrink: 0;
+    align-self: flex-end;
 }
 
 /* Feature Section */
@@ -895,9 +929,61 @@ body {
     font-size: 0.8rem;
     margin-left: auto;
 }
+g-chip-box {
+    position: absolute;         
+    top: 100%;                
+    left: 0;                   
+    margin-top: 6px;           
+    z-index: 10;
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #e1f5ee;
+    color: #0f6e56;
+    border: 1px solid #9fe1cb;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.tag-chip .remove-chip {
+    cursor: pointer;
+    font-size: 1rem;
+    color: #0f6e56;
+    line-height: 1;
+}
+
+.tag-chip .remove-chip:hover {
+    color: #d85a30;
+}
+
+.tag-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ddd;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.suggestion-item {
+  padding: 8px;
+  cursor: pointer;
+}
+
+.suggestion-item:hover {
+  background: #f0f0f0;
+}
 
 .date-wrapper {
-    display: flex;
+    display:flex ;
     gap: 0.5rem;
     align-items: center;
 }
@@ -929,6 +1015,8 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+    margin-top: 22px;        
+  flex-shrink: 0; 
 }
 
 .search-submit-icon {

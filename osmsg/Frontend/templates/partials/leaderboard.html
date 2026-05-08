@@ -1,4 +1,4 @@
-<!-- table.html — returned for HX-Request fetches -->
+<!-- leaderboard.html — returned for HX-Request fetches -->
 
 {% if error %}
 <div class="error-banner">
@@ -35,7 +35,7 @@
     </h3>
     <div class="stats-actions">
       <a
-        href="/statistics?hashtag={{ hashtag }}&daterange={{ daterange }}&limit={{ limit }}&offset={{ offset }}"
+      href="/statistics?{% for h in hashtags %}hashtags={{ h }}&{% endfor %}daterange={{ daterange }}&limit={{ limit }}&offset={{ offset }}"
         class="stats-btn-link"
       >
         <span class="material-icons" style="font-size: 1rem">open_in_new</span>

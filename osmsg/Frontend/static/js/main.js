@@ -26,19 +26,6 @@ function setIntervalRange(type) {
     setIntervalRangeForId(id, type);
 }
 
-function filterHashtags(query, dropdownId) {
-    const ddId = dropdownId || 'hashtag-dropdown';
-    const q = query.toLowerCase();
-    const dd = document.getElementById(ddId);
-    if (!dd) return;
-    dd.querySelectorAll('.hashtag-option').forEach(item => {
-        const text = item.querySelector('.hashtag-option-text')?.textContent.toLowerCase() || '';
-        const label = item.querySelector('.hashtag-option-label')?.textContent.toLowerCase() || '';
-        item.style.display = (text.includes(q) || label.includes(q)) ? 'flex' : 'none';
-    });
-}
-
-
 function downloadCSV() {
     const table = document.getElementById('leaderboardTable');
     if (!table) return;
@@ -64,3 +51,113 @@ function downloadCSV() {
     link.click();
     URL.revokeObjectURL(url);
 }
+
+const TAGS = [
+  "OzonGeo",
+  "tt_event",
+  "AfricaMapCup2026",
+  "maproulette",
+  "msf",
+  "missingmaps",
+  "Aweil",
+  "MapComplete",
+  "homtom",
+  "osm-tr",
+  "hotosm-project-49902",
+  "GeoTETZ",
+  "OSMTanzania",
+  "hotosm-project-49935",
+  "youthmappersoau",
+  "hotosm-project-49638",
+  "osmzwawakening",
+  "syria-remapping-2025",
+  "Kaart",
+  "osmzimbabwe"
+];
+
+const input = document.getElementById("hashtag-input");
+const suggestionsBox = document.getElementById("tag-suggestions");
+const chipBox = document.getElementById("tag-chip-box");
+const hiddenBox = document.getElementById("hashtag-hiddens");
+
+let tags = [];
+
+function renderTags() {
+  chipBox.innerHTML = "";
+  hiddenBox.innerHTML = "";
+
+  tags.forEach((tag, i) => {
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    chip.innerHTML = `
+      ${tag}
+      <span class="tag-remove" data-index="${i}">×</span>
+    `;
+
+    chipBox.appendChild(chip);
+
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "hashtags";
+    hidden.value = tag;
+
+    hiddenBox.appendChild(hidden);
+  });
+}
+
+function showSuggestions(value) {
+  suggestionsBox.innerHTML = "";
+
+  if (!value) return;
+
+  const filtered = TAGS.filter(
+    t =>
+      t.toLowerCase().includes(value.toLowerCase()) &&
+      !tags.includes(t)
+  );
+
+  filtered.forEach(tag => {
+    const item = document.createElement("div");
+    item.className = "suggestion-item";
+    item.textContent = tag;
+
+    item.onclick = () => {
+      tags.push(tag);
+      renderTags();
+
+      input.value = "";
+      suggestionsBox.innerHTML = "";
+    };
+
+    suggestionsBox.appendChild(item);
+  });
+}
+
+input.addEventListener("input", (e) => {
+  showSuggestions(e.target.value);
+});
+
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+
+    const value = input.value.trim();
+
+    if (value && TAGS.includes(value) && !tags.includes(value)) {
+      tags.push(value);
+      renderTags();
+    }
+
+    input.value = "";
+    suggestionsBox.innerHTML = "";
+  }
+});
+
+chipBox.addEventListener("click", (e) => {
+  if (e.target.classList.contains("tag-remove")) {
+    const index = e.target.dataset.index;
+    tags.splice(index, 1);
+    renderTags();
+  }
+});
