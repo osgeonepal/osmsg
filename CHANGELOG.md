@@ -1,3 +1,33 @@
+## v1.1.0 (2026-05-08)
+
+### Feat
+
+- **infra**: adds infra docker compose for hosting osmsg
+
+### Fix
+
+- **test**: fix test cases on api
+- **health**: fix health endpoint to include last_ts and updated_at
+- **padding**: fix changeset pad
+- **stats**: fix stats inconsistency on null
+- **url**: respect url when it is passed for country
+- **changeset**: null bug on bbox when newer one appears
+- **ci**: fixes spatial extension loading bug
+- **validation**: pydantic arg validation and docs with swagger
+- **test**: don't wait for fetch state to be there
+- **url**: api url arg default start end
+- **health**: patch health endpoint to include the last sequence and updated at
+- **docker**: caddy
+- **docker**: resource limit in docker compose
+- **docker**: docker compose prod cluster
+- **caddy**: adds caddy server and fix for the api rendering on 80 port
+- **schema**: fixes shcmea being in multiple pieces , added test case to catch the change
+- **pipeline**: Replace hardcoded "processing" label with stage-specific descriptions
+
+### Refactor
+
+- **alltags**: refactors all tags and schema
+
 ## v1.0.3 (2026-04-28)
 
 ### Perf
