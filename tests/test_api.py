@@ -40,7 +40,8 @@ def test_health_endpoint_returns_ok():
     data = response.json()
     assert data["status"] == "ok"
     assert data["last_seq"] is None
-    assert data["last_updated"] is None
+    assert data["last_ts"] is None
+    assert data["updated_at"] is None
 
 
 def test_normalize_hashtags_accepts_bare_or_prefixed_values():
