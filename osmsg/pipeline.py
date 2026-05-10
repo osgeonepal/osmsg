@@ -22,7 +22,7 @@ from .boundary import load_boundary
 from .db.queries import attach_metadata, attach_tag_stats, daily_summary, list_changesets, user_stats
 from .db.schema import get_state, upsert_state
 from .exceptions import CredentialsRequiredError, NoDataFoundError, OsmsgError
-from .export import summary_markdown, to_csv, to_json, to_parquet, to_psql
+from .export import summary_markdown, table_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
 from .geofabrik import country_geometry, country_update_url
 from .replication import (
@@ -521,19 +521,10 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         written["json"] = str(to_json(rows, out / f"{cfg.name}.json"))
 
     if "markdown" in cfg.formats:
-        from .export.markdown import summary_markdown as render_md
-
         md_path = out / f"{cfg.name}.md"
-        render_md(
+        table_markdown(
             rows,
             output_path=md_path,
-            start_date=start_date_utc,
-            end_date=end_date_utc,
-            additional_tags=cfg.additional_tags,
-            length_tags=cfg.length_tags,
-            tag_mode=cfg.tag_mode,
-            fname=cfg.name,
-            tm_stats=cfg.tm_stats,
         )
         written["markdown"] = str(md_path)
 
