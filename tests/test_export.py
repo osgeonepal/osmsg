@@ -61,9 +61,14 @@ def test_json_writes_native_types(tmp_path: Path):
     assert payload[0]["tags_create"] == {"building": 5}
 
 
-def test_table_markdown_renders_header_and_rows():
-    md = table_markdown(SAMPLE_ROWS, headers=["rank", "name", "map_changes"])
-    lines = md.splitlines()
+def test_table_markdown_writes_header_and_rows(tmp_path: Path):
+    output = table_markdown(
+        SAMPLE_ROWS,
+        output_path=tmp_path / "stats.md",
+        headers=["rank", "name", "map_changes"],
+    )
+    body = output.read_text(encoding="utf-8")
+    lines = body.splitlines()
     assert lines[0] == "| rank | name | map_changes |"
     assert lines[1] == "| --- | --- | --- |"
     assert "alice" in lines[2]

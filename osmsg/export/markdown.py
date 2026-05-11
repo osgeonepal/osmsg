@@ -17,15 +17,16 @@ def _stringify(v: Any) -> str:
     return str(v)
 
 
-def table_markdown(rows: list[dict[str, Any]], headers: list[str] | None = None) -> str:
+def table_markdown(rows: list[dict[str, Any]], output_path: Path, headers: list[str] | None = None) -> Path:
     """Return a GitHub-flavored markdown table for the given rows."""
-    if not rows:
-        return ""
     headers = headers or list(rows[0].keys())
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     for r in rows:
         lines.append("| " + " | ".join(_stringify(r.get(h)) for h in headers) + " |")
-    return "\n".join(lines)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    return output_path
 
 
 def _human(n: int) -> str:
