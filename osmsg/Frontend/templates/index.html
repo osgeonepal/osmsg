@@ -1,0 +1,108 @@
+{% extends "base.html" %} {% block content %}
+
+<div class="container index-container">
+  <div class="search-section search-section-centered">
+    <h2 class="form-title search-form-title">
+      <span class="material-icons search-title-icon">travel_explore</span>
+      Search OSM Statistics
+    </h2>
+
+    <form
+    class="horizontal-form"
+    hx-get="/statistics"
+    hx-target="#results"
+    hx-swap="innerHTML"
+  >
+    <div class="form-inputs-row">
+  
+      <div class="form-group form-group-300">
+        <label class="form-label" for="hashtag-input">Hashtags</label>
+        <div class="tag-search-wrapper" style="position: relative; border-bottom:none;">
+          <input
+            type="text"
+            id="hashtag-input"
+            placeholder="e.g.,hotosm, mapathon, htosm-project-1234.."
+            class="tag-chip-text"
+            autocomplete="off"
+            style=" width: 100%;"
+          />
+          <div id="tag-suggestions" class="tag-suggestions"></div>
+        </div>
+        <div id="hashtag-hiddens"></div>
+      </div>
+  
+      <div class="form-group form-group-300">
+        <label class="form-label">
+          <span class="material-icons form-label-icon">date_range</span>
+          Date Range
+        </label>
+        <div class="date-wrapper">
+          <input type="text" id="daterange" name="daterange" placeholder="Select date range" class="date-input" />
+          <div class="date-buttons">
+            <button type="button" class="i-btn" onclick="setIntervalRange('daily')" title="Last 24h">D</button>
+            <button type="button" class="i-btn" onclick="setIntervalRange('weekly')" title="Last 7 Days">W</button>
+            <button type="button" class="i-btn" onclick="setIntervalRange('monthly')" title="Last 30 Days">M</button>
+          </div>
+        </div>
+      </div>
+  
+      <button type="submit" class="search-btn search-submit-btn">
+        <span class="material-icons search-submit-icon">query_stats</span>
+        Get Statistics
+      </button>
+  
+    </div>
+  
+    <div id="tag-chip-box" class="tag-chip-box"></div>
+  
+  </form>
+    <div id="results"></div>
+
+    <div class="results-info-grid">
+      <div class="info-card">
+        <h3 class="info-card-title">
+          <span class="material-icons info-card-icon">help_outline</span>
+          How it works
+        </h3>
+        <ol class="info-card-list">
+          <li>Enter a <strong>hashtag</strong> used in OSM changesets.</li>
+          <li>
+            Select <strong>date range</strong> or use quick-select (D/W/M).
+          </li>
+          <li>Choose a <strong>topic</strong> to filter specific features.</li>
+          <li>Click <strong>Get Statistics</strong> for instant data.</li>
+        </ol>
+      </div>
+
+      <div class="info-card">
+        <h3 class="info-card-title">
+          <span class="material-icons info-card-icon">storage</span>
+          Scope of Data
+        </h3>
+        <p class="info-card-text">
+          OSMSG tracks all contributions made to OpenStreetMap through the
+          standard API. It analyzes labels, comments, and hashtags.
+        </p>
+        <div class="scope-tags">
+          <span class="scope-tag">
+            <span class="material-icons scope-tag-icon">commit</span> Changesets
+          </span>
+          <span class="scope-tag">
+            <span class="material-icons scope-tag-icon">group</span> Mappers
+          </span>
+          <span class="scope-tag">
+            <span class="material-icons scope-tag-icon">edit</span> Edits
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %} {% block extra_scripts %}
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+{% endblock %}
