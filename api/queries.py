@@ -37,6 +37,18 @@ _TAG_CTES = """,
             GROUP BY uid
         )"""
 
+_HASHTAG_CTE = """,
+        user_hashtags AS (
+            SELECT
+                st.uid,
+                ARRAY_AGG(DISTINCT ht.hashtag ORDER BY ht.hashtag) AS hashtags
+            FROM stats_scope st
+            JOIN changesets cs ON cs.changeset_id = st.changeset_id
+            CROSS JOIN LATERAL UNNEST(cs.hashtags) AS ht(hashtag)
+            WHERE cs.hashtags IS NOT NULL
+            GROUP BY st.uid
+        )"""
+
 
 def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: bool) -> str:
     n = 1
@@ -76,7 +88,7 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
     tag_group = ", tpu.tag_stats" if include_tags else ""
 
     return f"""
-        {scope_cte}{tag_ctes}
+        {scope_cte}{_HASHTAG_CTE}{tag_ctes}
         SELECT
             u.uid,
             u.username AS name,
@@ -112,11 +124,13 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
                     ) DESC,
                     u.uid ASC
             ) AS rank,
+            COALESCE(uh.hashtags, ARRAY[]::TEXT[]) AS hashtags,
             {tag_select}
         FROM users u
         JOIN stats_scope st ON u.uid = st.uid
+        LEFT JOIN user_hashtags uh ON uh.uid = u.uid
         {tag_join}
-        GROUP BY u.uid, u.username{tag_group}
+        GROUP BY u.uid, u.username, uh.hashtags{tag_group}
         ORDER BY map_changes DESC, u.uid ASC
         LIMIT {limit_param} OFFSET {offset_param}
     """

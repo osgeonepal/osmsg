@@ -87,6 +87,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
                 "poi_modify": 1,
                 "map_changes": 58,
                 "rank": 1,
+                "hashtags": ["#mapathon", "#roads"],
                 "tag_stats": {"building": {"yes": {"c": 3, "m": 0}}},
             }
         ]
@@ -130,6 +131,7 @@ def test_user_stats_endpoint_returns_expected_response(monkeypatch):
                 "poi_modify": 1,
                 "map_changes": 58,
                 "rank": 1,
+                "hashtags": ["#mapathon", "#roads"],
                 "tag_stats": {"building": {"yes": {"c": 3, "m": 0, "len": None}}},
             }
         ],
@@ -171,6 +173,7 @@ def test_user_stats_endpoint_tags_false_drops_tag_stats(monkeypatch):
                 "poi_modify": 0,
                 "map_changes": 0,
                 "rank": 1,
+                "hashtags": [],
                 "tag_stats": None,
             }
         ]
@@ -192,6 +195,7 @@ def test_user_stats_sql_omits_tag_ctes_when_tags_false():
     assert "tag_per_user" in sql_with
     assert "tag_per_user" not in sql_without
     assert "NULL::jsonb AS tag_stats" in sql_without
+    assert "user_hashtags" in sql_without
 
 
 def _seed_pg_via_to_psql(fresh_db, populated_db_factory, dsn):
@@ -268,6 +272,8 @@ def test_live_api_stats_default_returns_dicts_not_strings(live_api_client):
     assert body["count"] == 2
     by_name = {u["name"]: u for u in body["users"]}
     assert isinstance(by_name["alice"]["tag_stats"], dict)
+    assert by_name["alice"]["hashtags"] == ["#mapathon"]
+    assert by_name["bob"]["hashtags"] == []
     assert by_name["alice"]["tag_stats"]["building"]["yes"]["c"] == 5
     assert by_name["alice"]["tag_stats"]["building"]["yes"]["m"] == 1
     assert by_name["alice"]["tag_stats"]["highway"]["residential"]["len"] == 245.7
@@ -318,6 +324,7 @@ def test_live_api_stats_hashtag_filters_to_matching_changesets(live_api_client):
     assert body["hashtag"] == ["#mapathon"]
     names = {u["name"] for u in body["users"]}
     assert names == {"alice"}
+    assert body["users"][0]["hashtags"] == ["#mapathon"]
 
 
 @pytest.mark.network
@@ -448,6 +455,7 @@ def test_user_stats_sql_no_filter_skips_changesets_join():
     assert "filtered_changesets" not in sql
     assert "JOIN filtered_changesets" not in sql
     assert "stats_scope AS (SELECT * FROM changeset_stats)" in sql
+    assert "LEFT JOIN user_hashtags" in sql
 
 
 def test_user_stats_sql_filtered_uses_changesets_join():
