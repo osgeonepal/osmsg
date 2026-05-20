@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TagValueStats(BaseModel):
@@ -26,6 +26,7 @@ class UserStat(BaseModel):
     poi_modify: int
     map_changes: int
     rank: int
+    hashtags: list[str] = Field(default_factory=list)
     tag_stats: dict[str, dict[str, TagValueStats]] | None = None
 
 
