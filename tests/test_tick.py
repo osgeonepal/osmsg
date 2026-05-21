@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
+import os
 from pathlib import Path
 from typing import Any
 
@@ -98,3 +100,62 @@ def test_bootstrap_days_overrides_bootstrap_preset(tmp_path, monkeypatch, captur
     assert _tick.main() == 0
     cmd = captured_cmd["cmd"]
     assert cmd[-2:] == ["--days", "3"]
+
+
+def test_tick_lifecycle_cold_then_warm(tmp_path, monkeypatch, clean_env):
+    """Cold tick bootstraps; the next tick (after state lands) must switch to --update.
+
+    End-to-end guard for the bug: tick 0 bootstraps, the pipeline writes a state row
+    under the planet/minute URL, tick 1 must find that row instead of looking under
+    the geofabrik URL and re-bootstrapping forever.
+    """
+    calls: list[list[str]] = []
+
+    def fake_call(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        return 0
+
+    monkeypatch.setattr(_tick.subprocess, "call", fake_call)
+
+    name = "nepal"
+    monkeypatch.setenv(
+        "OSMSG_EXTRA_ARGS",
+        f"--name {name} --output-dir {tmp_path} --country nepal --url minute",
+    )
+    monkeypatch.setenv("OSMSG_BOOTSTRAP", "hour")
+
+    assert _tick.main() == 0
+    assert calls[0][-2:] == ["--last", "hour"]
+    assert "--update" not in calls[0]
+
+    _seed_state(tmp_path, name, SHORTCUTS["minute"])
+
+    assert _tick.main() == 0
+    assert "--update" in calls[1]
+    assert "--last" not in calls[1]
+
+
+def test_tick_skips_when_previous_tick_holds_lock(tmp_path, monkeypatch, clean_env):
+    """Concurrent-tick guard: flock is held → exit 0 immediately, never invoke subprocess."""
+    name = "nepal"
+    monkeypatch.setenv("OSMSG_EXTRA_ARGS", f"--name {name} --output-dir {tmp_path}")
+
+    call_count = 0
+
+    def fake_call(cmd, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(_tick.subprocess, "call", fake_call)
+
+    lock_path = tmp_path / f"{name}.lock"
+    holder = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        assert _tick.main() == 0
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
+
+    assert call_count == 0

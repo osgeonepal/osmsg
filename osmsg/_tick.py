@@ -46,28 +46,32 @@ def main() -> int:
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
+        os.close(lock_fd)
         print("[osmsg-tick] previous tick still running, skipping", flush=True)
         return 0
 
-    # Mirror pipeline._normalize_urls: explicit --url wins over --country's geofabrik default,
-    # otherwise --update can't find the state row and the DuckDB gets wiped every tick.
-    source_url = country_update_url(country) if country and explicit_url is None else resolve_url(url)
-    db_path = out / f"{name}.duckdb"
+    try:
+        # Mirror pipeline._normalize_urls: explicit --url wins over --country's geofabrik default,
+        # otherwise --update can't find the state row and the DuckDB gets wiped every tick.
+        source_url = country_update_url(country) if country and explicit_url is None else resolve_url(url)
+        db_path = out / f"{name}.duckdb"
 
-    extra_set = set(extra_args)
-    cmd = ["osmsg"] + extra_args
-    if not (extra_set & {"--all", "--keys"}):
-        cmd.append("--all")
+        extra_set = set(extra_args)
+        cmd = ["osmsg"] + extra_args
+        if not (extra_set & {"--all", "--keys"}):
+            cmd.append("--all")
 
-    if _has_state(db_path, source_url):
-        cmd.append("--update")
-    elif bootstrap_days:
-        cmd.extend(["--days", bootstrap_days])
-    else:
-        cmd.extend(["--last", bootstrap])
+        if _has_state(db_path, source_url):
+            cmd.append("--update")
+        elif bootstrap_days:
+            cmd.extend(["--days", bootstrap_days])
+        else:
+            cmd.extend(["--last", bootstrap])
 
-    print(f"[osmsg-tick] {' '.join(cmd)}", flush=True)
-    return subprocess.call(cmd)
+        print(f"[osmsg-tick] {' '.join(cmd)}", flush=True)
+        return subprocess.call(cmd)
+    finally:
+        os.close(lock_fd)
 
 
 if __name__ == "__main__":
