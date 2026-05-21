@@ -408,7 +408,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 conn,
                 source_url=CHANGESETS_REPLICATION,
                 last_seq=cs_end,
-                last_ts=cfg.end_date.astimezone(UTC),
+                last_ts=cs_repl.sequence_to_timestamp(cs_end),
                 updated_at=dt.datetime.now(UTC),
             )
             info("Changeset processing complete.")
@@ -439,6 +439,15 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
         if not urls:
             info(f"  {url}: already up-to-date")
+            if resume_seq is not None:
+                # Heartbeat: bump updated_at so /health can tell "alive, idle" apart from "stuck".
+                upsert_state(
+                    conn,
+                    source_url=url,
+                    last_seq=resume_seq - 1,
+                    last_ts=url_start,
+                    updated_at=dt.datetime.now(UTC),
+                )
             continue
 
         cf_dir.mkdir(parents=True, exist_ok=True)
