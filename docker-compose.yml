@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: ghcr.io/osgeonepal/osmsg-api:latest
+    image: ghcr.io/osgeonepal/osmsg-worker:latest
     build:
       context: .
       target: worker
