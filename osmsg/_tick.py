@@ -36,7 +36,8 @@ def main() -> int:
     name = _parse_arg(extra_args, "--name") or "stats"
     out = Path(_parse_arg(extra_args, "--output-dir") or "/var/lib/osmsg")
     country = _parse_arg(extra_args, "--country")
-    url = _parse_arg(extra_args, "--url") or "minute"
+    explicit_url = _parse_arg(extra_args, "--url")
+    url = explicit_url or "minute"
 
     out.mkdir(parents=True, exist_ok=True)
 
@@ -48,7 +49,9 @@ def main() -> int:
         print("[osmsg-tick] previous tick still running, skipping", flush=True)
         return 0
 
-    source_url = country_update_url(country) if country else resolve_url(url)
+    # Mirror pipeline._normalize_urls: explicit --url wins over --country's geofabrik default,
+    # otherwise --update can't find the state row and the DuckDB gets wiped every tick.
+    source_url = country_update_url(country) if country and explicit_url is None else resolve_url(url)
     db_path = out / f"{name}.duckdb"
 
     extra_set = set(extra_args)
