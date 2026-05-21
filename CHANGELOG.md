@@ -1,3 +1,11 @@
+## v1.1.1 (2026-05-21)
+
+### Fix
+
+- **bug**: replication timestamp
+- **osmsg**: update service configuration for docker compose
+- **osmsg**: resolved markdown stats bug
+
 ## v1.1.0 (2026-05-08)
 
 ### Feat
