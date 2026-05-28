@@ -40,6 +40,8 @@ def changefile_download_urls(
     base_url: str,
     *,
     resume_seq: int | None = None,
+    cs_ts: datetime | None = None,
+    update: bool,
 ) -> tuple[list[str], datetime, int, int, str, str]:
     """resume_seq starts exactly there (skipping the timestamp lookup + backward pad used on first runs)."""
     repl = ReplicationServer(base_url)
@@ -71,6 +73,7 @@ def changefile_download_urls(
     server_ts = server_ts.astimezone(UTC)
 
     last_seq = server_seq
+
     if end_date:
         end_seq = repl.timestamp_to_sequence(end_date)
         if end_seq is None:
@@ -84,6 +87,9 @@ def changefile_download_urls(
             last_seq += 1
         if last_seq >= server_seq:
             last_seq = server_seq
+
+    if update and cs_ts and ((end_date and (end_date > cs_ts)) or (not end_date and (server_ts > cs_ts))):
+        last_seq -= 1
 
     if seq >= last_seq:
         return [], server_ts, start_seq, last_seq, start_seq_url, repl.get_state_url(last_seq)

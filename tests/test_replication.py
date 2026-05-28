@@ -145,6 +145,7 @@ def test_changefile_download_urls_resume_seq_skips_backward_pad(changefile_repl)
         end_date=end,
         base_url="https://planet.openstreetmap.org/replication/minute",
         resume_seq=last_seq + 1,
+        update=False,
     )
 
     assert start_seq == last_seq + 1
@@ -165,8 +166,112 @@ def test_changefile_download_urls_no_resume_seq_pads_backward(changefile_repl):
         start_date=cur_ts - dt.timedelta(minutes=10) + dt.timedelta(seconds=30),
         end_date=cur_ts,
         base_url="https://planet.openstreetmap.org/replication/minute",
+        update=False,
     )
     expected_unpadded = cur_seq - 10
     assert start_seq <= expected_unpadded - 50, (
         f"expected backward pad of ~60, got start_seq={start_seq} (unpadded would be {expected_unpadded})"
     )
+
+
+def test_cs_ts_does_not_cap_last_seq_when_cs_ts_ahead_of_cf_server(changefile_repl):
+    """cs_ts > server_ts: changeset repl is ahead of changefile server.
+    last_seq must not be capped — the changesets table already covers the window."""
+    from osmsg.replication import changefile_download_urls
+
+    cur_seq, cur_ts = changefile_repl
+    cs_ts = cur_ts + dt.timedelta(minutes=5)  # changeset repl is AHEAD of server
+
+    _, _, _, end_seq_with_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=cur_ts,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=cs_ts,
+    )
+    _, _, _, end_seq_without_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=cur_ts,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=None,
+    )
+    assert end_seq_with_cs_ts == end_seq_without_cs_ts
+
+
+def test_cs_ts_does_not_cap_last_seq_when_cs_ts_ahead_of_end_date(changefile_repl):
+    """cs_ts > end_date: changeset repl has already covered the full requested window.
+    last_seq must not be capped"""
+    from osmsg.replication import changefile_download_urls
+
+    cur_seq, cur_ts = changefile_repl
+    end_date = cur_ts - dt.timedelta(minutes=10)
+    cs_ts = cur_ts  # cs_ts is AHEAD of end_date
+
+    _, _, _, end_seq_with_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=30),
+        end_date=end_date,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=cs_ts,
+    )
+    _, _, _, end_seq_without_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=30),
+        end_date=end_date,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=None,
+    )
+    assert end_seq_with_cs_ts == end_seq_without_cs_ts
+
+
+def test_cs_ts_caps_last_seq_when_end_date_ahead_of_cs_ts(changefile_repl):
+    """end_date > cs_ts: changefile window is ahead of changeset repl.
+    last_seq must be capped by 1 to avoid processing diffs whose changesets
+    aren't yet in the changesets table."""
+    from osmsg.replication import changefile_download_urls
+
+    cur_seq, cur_ts = changefile_repl
+    cs_ts = cur_ts - dt.timedelta(minutes=5)  # changeset repl is BEHIND
+
+    _, _, _, end_seq_with_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=cur_ts,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=cs_ts,
+    )
+    _, _, _, end_seq_without_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=cur_ts,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=None,
+    )
+    assert end_seq_with_cs_ts == end_seq_without_cs_ts - 1
+
+
+def test_cs_ts_caps_last_seq_when_cf_server_ahead_of_cs_ts(changefile_repl):
+    """server_ts > cs_ts: changefile server is ahead of changeset repl.
+    last_seq must be capped by 1 so we don't process diffs whose changesets
+    aren't yet in the changesets table."""
+    from osmsg.replication import changefile_download_urls
+
+    cur_seq, cur_ts = changefile_repl
+    cs_ts = cur_ts - dt.timedelta(minutes=5)  # changeset repl is BEHIND server
+
+    _, _, _, end_seq_with_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=None,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=cs_ts,
+    )
+    _, _, _, end_seq_without_cs_ts, _, _ = changefile_download_urls(
+        start_date=cur_ts - dt.timedelta(minutes=10),
+        end_date=None,
+        base_url="https://planet.openstreetmap.org/replication/minute",
+        update=True,
+        cs_ts=None,
+    )
+    assert end_seq_with_cs_ts == end_seq_without_cs_ts - 1

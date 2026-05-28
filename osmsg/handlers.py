@@ -37,7 +37,11 @@ class ChangesetHandler(osmium.SimpleHandler):
         # `c.open` gate is required: osmium uses 1970 as the closed_at sentinel.
         start = cfg.get("window_start_utc")
         end = cfg.get("window_end_utc")
-        if start is not None and end is not None:
+        resume_seq = cfg.get("cs_resume_seq")
+        update = cfg.get("update")
+
+        is_update_resume = update and resume_seq is not None
+        if not is_update_resume and start is not None and end is not None:
             created = c.created_at
             if created.tzinfo is None:
                 created = created.replace(tzinfo=dt.UTC)
@@ -123,6 +127,8 @@ class ChangefileHandler(osmium.SimpleHandler):
         self.seq_id = sequence_id
         # None == no filter; empty set == filter matched nothing (collect nothing).
         self.valid_changesets = valid_changesets
+        self.resume_seq = config["resume_seq_cf"]
+        self.update = config["update"]
 
         self.users: dict[int, User] = {}
         self.stubs: dict[int, Changeset] = {}
@@ -189,14 +195,16 @@ class ChangefileHandler(osmium.SimpleHandler):
                     tv.add_length(len_m)
 
     def node(self, n) -> None:
-        if not (self.start <= n.timestamp < self.end):
+        is_update_resume = self.update and self.resume_seq is not None
+        if not is_update_resume and not (self.start <= n.timestamp < self.end):
             return
         if not self._should_collect(n.user, n.changeset):
             return
         self._accumulate(n.uid, n.user, n.changeset, 0 if n.deleted else n.version, n.tags, "nodes")
 
     def way(self, w) -> None:
-        if not (self.start <= w.timestamp < self.end):
+        is_update_resume = self.update and self.resume_seq is not None
+        if not is_update_resume and not (self.start <= w.timestamp < self.end):
             return
         if not self._should_collect(w.user, w.changeset):
             return
@@ -204,7 +212,8 @@ class ChangefileHandler(osmium.SimpleHandler):
         self._accumulate(w.uid, w.user, w.changeset, 0 if w.deleted else w.version, w.tags, "ways", nodes)
 
     def relation(self, r) -> None:
-        if not (self.start <= r.timestamp < self.end):
+        is_update_resume = self.update and self.resume_seq is not None
+        if not is_update_resume and not (self.start <= r.timestamp < self.end):
             return
         if not self._should_collect(r.user, r.changeset):
             return

@@ -99,4 +99,6 @@ def changefile_config():
         "parquet_dir": "temp_parquet",
         "start_date_utc": dt.datetime(1969, 1, 1, tzinfo=dt.UTC),
         "end_date_utc": dt.datetime(2099, 12, 31, tzinfo=dt.UTC),
+        "resume_seq_cf": None,
+        "update": False,
     }

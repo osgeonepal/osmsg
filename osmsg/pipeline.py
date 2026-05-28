@@ -371,6 +371,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     valid_changesets: set[int] | None = None
     start_seq: int | None = None
     end_seq: int | None = None
+    cs_resume_seq: int | None = None
 
     if cfg.hashtags or cfg.changeset:
         cs_repl = ChangesetReplication(pad_hours=cfg.changeset_pad_hours)
@@ -382,6 +383,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             if cs_state
             else f"first run with {cfg.changeset_pad_hours}h backward pad"
         )
+        last_cs_ts = cs_repl.sequence_to_timestamp(cs_end)
+
         info(f"Changesets: {len(urls)} files (seq {cs_start}-{cs_end}), {pad_note}.")
 
         if urls:
@@ -389,6 +392,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             cs_config = _processing_config(cfg, parquet_dir=cs_dir, geom_wkt=geom_wkt)
             cs_config["window_start_utc"] = cfg.start_date.astimezone(UTC)
             cs_config["window_end_utc"] = cfg.end_date.astimezone(UTC)
+            cs_config["cs_resume_seq"] = cs_resume_seq
+            cs_config["update"] = cfg.update
 
             _download_all(
                 urls, "changeset", max_workers, None, cfg.cache_dir, "changesets", description="Downloading changesets"
@@ -408,7 +413,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 conn,
                 source_url=CHANGESETS_REPLICATION,
                 last_seq=cs_end,
-                last_ts=cs_repl.sequence_to_timestamp(cs_end),
+                last_ts=last_cs_ts,
                 updated_at=dt.datetime.now(UTC),
             )
             info("Changeset processing complete.")
@@ -420,8 +425,11 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     for url in cfg.urls:
         info(f"Changefiles ← {url}")
         url_start, resume_seq = url_starts[url]
+
+        cs_ts = last_cs_ts if (cfg.hashtags or cfg.changeset) else None
+
         urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(
-            url_start, cfg.end_date, url, resume_seq=resume_seq
+            url_start, cfg.end_date, url, resume_seq=resume_seq, cs_ts=cs_ts, update=cfg.update
         )
         if start_seq is None:
             start_seq = src_start_seq
@@ -454,6 +462,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         cf_config = _processing_config(cfg, parquet_dir=cf_dir, geom_wkt=None)
         cf_config["start_date_utc"] = url_start_date_utc
         cf_config["end_date_utc"] = url_end_date_utc
+        cf_config["update"] = cfg.update
+        cf_config["resume_seq_cf"] = resume_seq
 
         _download_all(
             urls,
