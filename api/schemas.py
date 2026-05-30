@@ -41,6 +41,56 @@ class UserStatsResponse(BaseModel):
     users: list[UserStat]
 
 
+class HashtagStat(BaseModel):
+    hashtag: str
+    changesets: int
+    users: int
+    map_changes: int
+    rank: int
+
+
+class HashtagTrend(BaseModel):
+    period_start: datetime
+    hashtag: str
+    changesets: int
+    users: int
+    map_changes: int
+
+
+class HashtagTrendsResponse(BaseModel):
+    interval: str
+    trends: list[HashtagTrend]
+
+
+class HashtagStatsResponse(BaseModel):
+    count: int
+    start: datetime
+    end: datetime
+    hashtag: list[str] | None
+    interval: str
+    limit: int
+    offset: int
+    hashtags: list[HashtagStat]
+    trends: list[HashtagTrend]
+
+
+class EditorStat(BaseModel):
+    editor: str
+    changesets: int
+    users: int
+    map_changes: int
+    rank: int
+
+
+class EditorStatsResponse(BaseModel):
+    count: int
+    start: datetime | None
+    end: datetime | None
+    limit: int
+    offset: int
+    editors: list[EditorStat]
+
+
 class HealthResponse(BaseModel):
     status: str
     last_seq: int | None

@@ -28,6 +28,9 @@ def test_api_exposes_only_active_public_routes():
 
     assert "/health" in paths
     assert "/api/v1/stats" in paths
+    assert "/api/v1/hashtag-stats" in paths
+    assert "/api/v1/editor-stats" in paths
+    assert "/api/v1/hashtag-trends" not in paths
     assert "/api/v1/stats/summary" not in paths
     assert "/api/v1/stats/timeseries" not in paths
 
@@ -56,9 +59,14 @@ def test_normalize_hashtags_dedupes_case_insensitively():
     assert normalize_hashtags(["maproulette", "#MapRoulette", "#roads"]) == ["#maproulette", "#roads"]
 
 
-def _stats_app(monkeypatch, fake_fetch):
-    monkeypatch.setattr(v1_module, "fetch_user_stats", fake_fetch)
+def _v1_app(monkeypatch, **fakes):
+    for name, fake in fakes.items():
+        monkeypatch.setattr(v1_module, name, fake)
     return Litestar(route_handlers=[v1_router])
+
+
+def _stats_app(monkeypatch, fake_fetch):
+    return _v1_app(monkeypatch, fetch_user_stats=fake_fetch)
 
 
 def test_user_stats_endpoint_returns_expected_response(monkeypatch):
@@ -187,6 +195,116 @@ def test_user_stats_endpoint_tags_false_drops_tag_stats(monkeypatch):
     assert body["users"][0]["tag_stats"] is None
 
 
+def test_hashtag_stats_endpoint_returns_expected_response(monkeypatch):
+    async def fake_fetch_hashtag_stats(*, start, end, hashtag, limit, offset):
+        assert start.isoformat() == "2026-05-01T00:00:00+00:00"
+        assert end.isoformat() == "2026-05-02T00:00:00+00:00"
+        assert hashtag == ["#mapathon"]
+        assert limit == 2
+        assert offset == 0
+        return [
+            {"hashtag": "#mapathon", "changesets": 4, "users": 3, "map_changes": 100, "rank": 1},
+            {"hashtag": "#roads", "changesets": 2, "users": 2, "map_changes": 25, "rank": 2},
+        ]
+
+    async def fake_fetch_hashtag_trends(*, start, end, interval, hashtag, limit, offset):
+        assert start.isoformat() == "2026-05-01T00:00:00+00:00"
+        assert end.isoformat() == "2026-05-02T00:00:00+00:00"
+        assert interval == "day"
+        assert hashtag == ["#mapathon"]
+        assert limit == 2
+        assert offset == 0
+        return [
+            {
+                "period_start": datetime(2026, 5, 1, tzinfo=UTC),
+                "hashtag": "#mapathon",
+                "changesets": 4,
+                "users": 3,
+                "map_changes": 100,
+            }
+        ]
+
+    with TestClient(
+        _v1_app(
+            monkeypatch,
+            fetch_hashtag_stats=fake_fetch_hashtag_stats,
+            fetch_hashtag_trends=fake_fetch_hashtag_trends,
+        )
+    ) as client:
+        response = client.get(
+            "/api/v1/hashtag-stats",
+            params={
+                "start": "2026-05-01T00:00:00Z",
+                "end": "2026-05-02T00:00:00Z",
+                "hashtag": "mapathon",
+                "limit": "2",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 2,
+        "start": "2026-05-01T00:00:00Z",
+        "end": "2026-05-02T00:00:00Z",
+        "hashtag": ["#mapathon"],
+        "interval": "day",
+        "limit": 2,
+        "offset": 0,
+        "hashtags": [
+            {"hashtag": "#mapathon", "changesets": 4, "users": 3, "map_changes": 100, "rank": 1},
+            {"hashtag": "#roads", "changesets": 2, "users": 2, "map_changes": 25, "rank": 2},
+        ],
+        "trends": [
+            {
+                "period_start": "2026-05-01T00:00:00Z",
+                "hashtag": "#mapathon",
+                "changesets": 4,
+                "users": 3,
+                "map_changes": 100,
+            },
+        ],
+    }
+
+
+def test_hashtag_stats_endpoint_rejects_invalid_interval(monkeypatch):
+    async def fake_fetch_hashtag_trends(**kwargs):
+        raise AssertionError("fetch_hashtag_trends should not be called")
+
+    with TestClient(_v1_app(monkeypatch, fetch_hashtag_trends=fake_fetch_hashtag_trends)) as client:
+        response = client.get("/api/v1/hashtag-stats", params={"interval": "hour"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "interval must be one of: day, week, month"
+
+
+def test_editor_stats_endpoint_returns_expected_response(monkeypatch):
+    async def fake_fetch_editor_stats(*, start, end, limit, offset):
+        assert start is None
+        assert end is None
+        assert limit == 2
+        assert offset == 0
+        return [
+            {"editor": "iD 2.34.0", "changesets": 10, "users": 5, "map_changes": 500, "rank": 1},
+            {"editor": "JOSM", "changesets": 4, "users": 2, "map_changes": 120, "rank": 2},
+        ]
+
+    with TestClient(_v1_app(monkeypatch, fetch_editor_stats=fake_fetch_editor_stats)) as client:
+        response = client.get("/api/v1/editor-stats", params={"limit": "2"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 2,
+        "start": None,
+        "end": None,
+        "limit": 2,
+        "offset": 0,
+        "editors": [
+            {"editor": "iD 2.34.0", "changesets": 10, "users": 5, "map_changes": 500, "rank": 1},
+            {"editor": "JOSM", "changesets": 4, "users": 2, "map_changes": 120, "rank": 2},
+        ],
+    }
+
+
 def test_user_stats_sql_omits_tag_ctes_when_tags_false():
     from api.queries import _user_stats_sql
 
@@ -196,6 +314,33 @@ def test_user_stats_sql_omits_tag_ctes_when_tags_false():
     assert "tag_per_user" not in sql_without
     assert "NULL::jsonb AS tag_stats" in sql_without
     assert "user_hashtags" in sql_without
+
+
+def test_hashtag_stats_sql_uses_array_overlap_and_lateral_unnest():
+    from api.queries import _hashtag_stats_sql
+
+    sql = _hashtag_stats_sql(filter_dates=True, filter_hashtags=True)
+    assert "CROSS JOIN LATERAL UNNEST(cs.hashtags)" in sql
+    assert "cs.hashtags && $3::TEXT[]" in sql
+    assert "LIMIT $4 OFFSET $5" in sql
+
+
+def test_hashtag_trends_sql_uses_bounded_date_range():
+    from api.queries import _hashtag_trends_sql
+
+    sql = _hashtag_trends_sql(filter_hashtags=False)
+    assert "DATE_TRUNC($3, cs.created_at)" in sql
+    assert "cs.created_at >= $1" in sql
+    assert "cs.created_at < $2" in sql
+    assert "LIMIT $4 OFFSET $5" in sql
+
+
+def test_editor_stats_sql_groups_blank_editors_as_unknown():
+    from api.queries import _editor_stats_sql
+
+    sql = _editor_stats_sql(filter_dates=False)
+    assert "COALESCE(NULLIF(cs.editor, ''), 'unknown') AS editor" in sql
+    assert "GROUP BY editor" in sql
 
 
 def _seed_pg_via_to_psql(fresh_db, populated_db_factory, dsn):

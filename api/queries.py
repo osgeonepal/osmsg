@@ -3,6 +3,14 @@ from typing import Any
 
 from .db import get_pool
 
+
+def _map_changes_expr(alias: str = "st") -> str:
+    return f"""
+        {alias}.nodes_created + {alias}.nodes_modified + {alias}.nodes_deleted +
+        {alias}.ways_created + {alias}.ways_modified + {alias}.ways_deleted +
+        {alias}.rels_created + {alias}.rels_modified + {alias}.rels_deleted
+    """
+
 _TAG_CTES = """,
         tag_agg AS (
             SELECT
@@ -136,6 +144,119 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
     """
 
 
+def _changeset_filters_sql(*, filter_dates: bool, filter_hashtags: bool = False) -> tuple[str, int]:
+    n = 1
+    filters: list[str] = []
+    if filter_dates:
+        filters.append(f"cs.created_at >= ${n}")
+        n += 1
+        filters.append(f"cs.created_at < ${n}")
+        n += 1
+    if filter_hashtags:
+        filters.append(f"cs.hashtags && ${n}::TEXT[]")
+        n += 1
+    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+    return where_sql, n
+
+
+def _hashtag_stats_sql(*, filter_dates: bool, filter_hashtags: bool) -> str:
+    where_sql, n = _changeset_filters_sql(filter_dates=filter_dates, filter_hashtags=filter_hashtags)
+    limit_param = f"${n}"
+    offset_param = f"${n + 1}"
+    map_changes = _map_changes_expr()
+    return f"""
+        WITH hashtag_scope AS (
+            SELECT
+                ht.hashtag,
+                st.uid,
+                st.changeset_id,
+                ({map_changes}) AS map_changes
+            FROM changesets cs
+            JOIN changeset_stats st ON st.changeset_id = cs.changeset_id
+            CROSS JOIN LATERAL UNNEST(cs.hashtags) AS ht(hashtag)
+            {where_sql}
+        ),
+        hashtag_totals AS (
+            SELECT
+                hashtag,
+                COUNT(DISTINCT changeset_id) AS changesets,
+                COUNT(DISTINCT uid) AS users,
+                COALESCE(SUM(map_changes), 0) AS map_changes
+            FROM hashtag_scope
+            GROUP BY hashtag
+        )
+        SELECT
+            hashtag,
+            changesets,
+            users,
+            map_changes,
+            ROW_NUMBER() OVER (ORDER BY map_changes DESC, hashtag ASC) AS rank
+        FROM hashtag_totals
+        ORDER BY map_changes DESC, hashtag ASC
+        LIMIT {limit_param} OFFSET {offset_param}
+    """
+
+
+def _hashtag_trends_sql(*, filter_hashtags: bool) -> str:
+    where_sql, n = _changeset_filters_sql(filter_dates=True, filter_hashtags=filter_hashtags)
+    interval_param = f"${n}"
+    limit_param = f"${n + 1}"
+    offset_param = f"${n + 2}"
+    map_changes = _map_changes_expr()
+    return f"""
+        SELECT
+            DATE_TRUNC({interval_param}, cs.created_at) AS period_start,
+            ht.hashtag,
+            COUNT(DISTINCT st.changeset_id) AS changesets,
+            COUNT(DISTINCT st.uid) AS users,
+            COALESCE(SUM({map_changes}), 0) AS map_changes
+        FROM changesets cs
+        JOIN changeset_stats st ON st.changeset_id = cs.changeset_id
+        CROSS JOIN LATERAL UNNEST(cs.hashtags) AS ht(hashtag)
+        {where_sql}
+        GROUP BY period_start, ht.hashtag
+        ORDER BY period_start ASC, map_changes DESC, ht.hashtag ASC
+        LIMIT {limit_param} OFFSET {offset_param}
+    """
+
+
+def _editor_stats_sql(*, filter_dates: bool) -> str:
+    where_sql, n = _changeset_filters_sql(filter_dates=filter_dates)
+    limit_param = f"${n}"
+    offset_param = f"${n + 1}"
+    map_changes = _map_changes_expr()
+    return f"""
+        WITH editor_scope AS (
+            SELECT
+                COALESCE(NULLIF(cs.editor, ''), 'unknown') AS editor,
+                st.uid,
+                st.changeset_id,
+                ({map_changes}) AS map_changes
+            FROM changesets cs
+            JOIN changeset_stats st ON st.changeset_id = cs.changeset_id
+            {where_sql}
+        ),
+        editor_totals AS (
+            SELECT
+                editor,
+                COUNT(DISTINCT changeset_id) AS changesets,
+                COUNT(DISTINCT uid) AS users,
+                COALESCE(SUM(map_changes), 0) AS map_changes
+            FROM editor_scope
+            GROUP BY editor
+        )
+        SELECT
+            editor,
+            changesets,
+            users,
+            map_changes,
+            ROW_NUMBER() OVER (ORDER BY map_changes DESC, editor ASC) AS rank
+        FROM editor_totals
+        ORDER BY map_changes DESC, editor ASC
+        LIMIT {limit_param} OFFSET {offset_param}
+    """
+
+
 async def fetch_state() -> dict[str, Any] | None:
     # last_ts/last_seq come from the worst-lagging source (slowest source bounds real freshness);
     # updated_at is the most recent heartbeat across all sources (any tick proves the worker is alive).
@@ -170,6 +291,69 @@ async def fetch_user_stats(
         params.extend([start, end])
     if filter_hashtags:
         params.append(hashtag)
+    params.extend([limit, offset])
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+    return [dict(row) for row in rows]
+
+
+async def fetch_hashtag_stats(
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    hashtag: list[str] | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    filter_dates = start is not None and end is not None
+    filter_hashtags = bool(hashtag)
+    sql = _hashtag_stats_sql(filter_dates=filter_dates, filter_hashtags=filter_hashtags)
+    params: list[Any] = []
+    if filter_dates:
+        params.extend([start, end])
+    if filter_hashtags:
+        params.append(hashtag)
+    params.extend([limit, offset])
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+    return [dict(row) for row in rows]
+
+
+async def fetch_hashtag_trends(
+    *,
+    start: datetime,
+    end: datetime,
+    interval: str,
+    hashtag: list[str] | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    filter_hashtags = bool(hashtag)
+    sql = _hashtag_trends_sql(filter_hashtags=filter_hashtags)
+    params: list[Any] = [start, end]
+    if filter_hashtags:
+        params.append(hashtag)
+    params.extend([interval, limit, offset])
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+    return [dict(row) for row in rows]
+
+
+async def fetch_editor_stats(
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    filter_dates = start is not None and end is not None
+    sql = _editor_stats_sql(filter_dates=filter_dates)
+    params: list[Any] = []
+    if filter_dates:
+        params.extend([start, end])
     params.extend([limit, offset])
 
     async with get_pool().acquire() as conn:
