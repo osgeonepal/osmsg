@@ -11,6 +11,7 @@ def _map_changes_expr(alias: str = "st") -> str:
         {alias}.rels_created + {alias}.rels_modified + {alias}.rels_deleted
     """
 
+
 _TAG_CTES = """,
         tag_agg AS (
             SELECT
