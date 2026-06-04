@@ -1,3 +1,83 @@
+## v1.1.1 (2026-05-21)
+
+### Fix
+
+- **bug**: replication timestamp
+- **osmsg**: update service configuration for docker compose
+- **osmsg**: resolved markdown stats bug
+
+## v1.1.0 (2026-05-08)
+
+### Feat
+
+- **infra**: adds infra docker compose for hosting osmsg
+
+### Fix
+
+- **test**: fix test cases on api
+- **health**: fix health endpoint to include last_ts and updated_at
+- **padding**: fix changeset pad
+- **stats**: fix stats inconsistency on null
+- **url**: respect url when it is passed for country
+- **changeset**: null bug on bbox when newer one appears
+- **ci**: fixes spatial extension loading bug
+- **validation**: pydantic arg validation and docs with swagger
+- **test**: don't wait for fetch state to be there
+- **url**: api url arg default start end
+- **health**: patch health endpoint to include the last sequence and updated at
+- **docker**: caddy
+- **docker**: resource limit in docker compose
+- **docker**: docker compose prod cluster
+- **caddy**: adds caddy server and fix for the api rendering on 80 port
+- **schema**: fixes shcmea being in multiple pieces , added test case to catch the change
+- **pipeline**: Replace hardcoded "processing" label with stage-specific descriptions
+
+### Refactor
+
+- **alltags**: refactors all tags and schema
+
+## v1.0.3 (2026-04-28)
+
+### Perf
+
+- **url**: auto switch the replication url base don the input span
+
+## v1.0.2 (2026-04-28)
+
+### Fix
+
+- **precommit**: add lock to precommit hooks
+- **license**: fix license text on build
+
+## v1.0.1 (2026-04-28)
+
+### Fix
+
+- **lock**: uv lock
+
+## v1.0.0 (2026-04-28)
+
+### Fix
+
+- **docker**: fixes docker images , replaced  slim image with the distroless
+- **ci**: fix lib creds on ci
+- **data**: fix bug on data loss due to window changeset open
+- **stat**: completeness test cases
+- **stream**: fixes live streaming of the compressed osm files
+- **test**: fixes test case strip issue
+- **Dockerfile**: version upgrade in stage 1 - missed that one in the last commit
+- **test_app.yml**: I had to remove "" from the python version number and change the number to python3.x
+
+### Refactor
+
+- **osmsg**: Updated the processing with this approach: Workers → write Parquet (independent) → final DuckDB merge.
+- **osmsg**: Data type validation with pydantic models and multi-process implementations for processing of files
+- **build.yml-test_app.yml**: remove uneeded installs in test_app.yml and let uv set up python in both test_app.yml and build.yml
+
+### Perf
+
+- **chore**: housekeeping removing dead links
+
 ## v0.3.0 (2024-08-26)
 
 ### Feat

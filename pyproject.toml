@@ -1,12 +1,13 @@
 [project]
 name = "osmsg"
-version = "0.4.0"
+version = "1.1.1"
 description = "OpenStreetMap Stats Generator: Commandline"
 readme = "README.md"
 authors = [
     {name = "Kshitij Raj Sharma", email = "skshitizraj@gmail.com"},
 ]
-license = {text = "GPL-3.0-only"}
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.5.2",
@@ -49,6 +50,10 @@ module-name = "osmsg"
 module-root = ""
 
 [dependency-groups]
+api = [
+    "asyncpg>=0.30.0",
+    "litestar[standard,pydantic]>=2.18.0",
+]
 dev = [
     "pytest>=7.4.2",
     "pytest-mock>=3.14.0",
@@ -76,6 +81,10 @@ version_files = [
     "pyproject.toml:version",
     "osmsg/__version__.py",
 ]
+pre_bump_hooks = [
+    "uv lock",
+    "git add uv.lock",
+]
 
 [tool.ruff]
 fix = true
@@ -99,7 +108,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.src]
-include = ["osmsg"]
+include = ["osmsg", "api"]
 
 [tool.coverage.run]
 source = ["osmsg"]

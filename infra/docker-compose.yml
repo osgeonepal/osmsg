@@ -1,0 +1,105 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5-alpine
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: osmsg
+      POSTGRES_PASSWORD: osmsg
+      POSTGRES_DB: osmsg
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osmsg -d osmsg"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 300M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/osgeonepal/osmsg-api:latest
+    environment:
+      DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M
+        reservations:
+          memory: 64M
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/osgeonepal/osmsg-worker:latest
+    environment:
+      DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
+      OSMSG_SCHEDULE: ${OSMSG_SCHEDULE:-*/2 * * * *}
+      OSMSG_BOOTSTRAP: ${OSMSG_BOOTSTRAP:-hour}
+      OSMSG_BOOTSTRAP_DAYS: ${OSMSG_BOOTSTRAP_DAYS:-}
+      OSM_USERNAME: ${OSM_USERNAME:-}
+      OSM_PASSWORD: ${OSM_PASSWORD:-}
+      OSMSG_EXTRA_ARGS: ${OSMSG_EXTRA_ARGS:-}
+    volumes:
+      - osmsg-data:/var/lib/osmsg
+      - osmsg-cache:/var/cache/osmsg
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 400M
+        reservations:
+          memory: 128M
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+        reservations:
+          memory: 32M
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mnt/osmsg/pgdata
+  osmsg-data:
+  osmsg-cache:
+  caddy-data:
+  caddy-config:

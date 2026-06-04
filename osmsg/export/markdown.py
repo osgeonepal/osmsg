@@ -17,15 +17,16 @@ def _stringify(v: Any) -> str:
     return str(v)
 
 
-def table_markdown(rows: list[dict[str, Any]], headers: list[str] | None = None) -> str:
+def table_markdown(rows: list[dict[str, Any]], output_path: Path, headers: list[str] | None = None) -> Path:
     """Return a GitHub-flavored markdown table for the given rows."""
-    if not rows:
-        return ""
     headers = headers or list(rows[0].keys())
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     for r in rows:
         lines.append("| " + " | ".join(_stringify(r.get(h)) for h in headers) + " |")
-    return "\n".join(lines)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    return output_path
 
 
 def _human(n: int) -> str:
@@ -57,7 +58,7 @@ def summary_markdown(
     end_date,
     additional_tags: list[str] | None = None,
     length_tags: list[str] | None = None,
-    all_tags: bool = False,
+    tag_mode: str = "none",
     fname: str = "stats",
     tm_stats: bool = False,
 ) -> Path:
@@ -80,8 +81,33 @@ def summary_markdown(
     parts.append(f"\nFull stats: `{fname}.parquet`")
 
     parts.append("\n#### Top 5 users")
+    user_cols = (
+        ("rank", "rank"),
+        ("name", "name"),
+        ("changesets", "changesets"),
+        ("map_changes", "map changes"),
+        ("nodes_create", "nodes created"),
+        ("ways_create", "ways created"),
+        ("rels_create", "rels created"),
+        ("poi_create", "poi created"),
+        ("hashtags", "hashtags"),
+    )
+    parts.append("| " + " | ".join(label for _, label in user_cols) + " |")
+    parts.append("| " + " | ".join("---" for _ in user_cols) + " |")
     for r in rows[:5]:
-        parts.append(f"- {r['name']}: {_human(int(r.get('map_changes', 0) or 0))} map changes")
+        cells: list[str] = []
+        for key, _ in user_cols:
+            v = r.get(key)
+            if key == "hashtags":
+                hts = v or []
+                cells.append(", ".join(hts[:3]) + (f" (+{len(hts) - 3})" if len(hts) > 3 else ""))
+            elif key == "name":
+                cells.append(str(v or ""))
+            elif key == "rank":
+                cells.append(str(v if v is not None else ""))
+            else:
+                cells.append(_human(int(v or 0)))
+        parts.append("| " + " | ".join(cells) + " |")
 
     if tm_stats and any("tasks_mapped" in r for r in rows):
         parts.append("\n#### Top 5 TM mappers")
@@ -99,7 +125,7 @@ def summary_markdown(
         total_m = sum(int(r.get(f"{k}_len_m", 0) or 0) for r in rows)
         parts.append(f"- {k} length created: {_human(round(total_m / 1000))} km")
 
-    if all_tags:
+    if tag_mode != "none":
         merged_create: dict[str, int] = {}
         merged_modify: dict[str, int] = {}
         for r in rows:

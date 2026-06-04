@@ -111,18 +111,29 @@ def main(
         bool | None,
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Print version and exit."),
     ] = None,
-    name: Annotated[str, typer.Option(help="Output basename. Writes <name>.duckdb + selected formats.")] = "stats",
+    name: Annotated[
+        str,
+        typer.Option(envvar="OSMSG_NAME", help="Output basename. Writes <name>.duckdb + selected formats."),
+    ] = "stats",
     start: Annotated[str | None, typer.Option(help="ISO start (UTC). 'YYYY-MM-DD HH:MM:SS'.")] = None,
     end: Annotated[str | None, typer.Option(help="ISO end (UTC). Defaults to now.")] = None,
     last: Annotated[Period | None, typer.Option(help="Convenience: hour|day|week|month|year.")] = None,
     days: Annotated[int | None, typer.Option(help="Last N days (mutually exclusive with --last).")] = None,
     country: Annotated[
         list[str] | None,
-        typer.Option("--country", help="Geofabrik region id(s); resolved live. Requires OSM credentials."),
+        typer.Option(
+            "--country",
+            envvar="OSMSG_COUNTRY",
+            help="Geofabrik region id(s); resolved live. Requires OSM credentials. Comma-separated when set via env.",
+        ),
     ] = None,
     url: Annotated[
         list[str] | None,
-        typer.Option("--url", help="Replication URL(s). Shortcuts: minute, hour, day."),
+        typer.Option(
+            "--url",
+            envvar="OSMSG_URL",
+            help="Replication URL(s). Shortcuts: minute, hour, day. Comma-separated when set via env.",
+        ),
     ] = None,
     hashtags: Annotated[
         list[str] | None,
@@ -134,29 +145,54 @@ def main(
         list[str] | None,
         typer.Option("--users", help="Filter to OSM usernames (case-sensitive, exact match). Repeat for more."),
     ] = None,
-    workers: Annotated[int | None, typer.Option(help="Parallel workers (default: cpu count).")] = None,
+    workers: Annotated[
+        int | None,
+        typer.Option(envvar="OSMSG_WORKERS", help="Parallel workers (default: cpu count)."),
+    ] = None,
     rows: Annotated[
         int | None,
         typer.Option(help="Cap rows shown in the console table. Files always carry the full set."),
     ] = None,
-    boundary: Annotated[str | None, typer.Option(help="Path to GeoJSON or inline geojson string.")] = None,
-    formats: Annotated[list[Format] | None, typer.Option("--format", "-f", help="One or more output formats.")] = None,
+    boundary: Annotated[
+        str | None,
+        typer.Option(
+            envvar="OSMSG_BOUNDARY",
+            help="Boundary filter: Geofabrik region name (e.g. 'nepal'), GeoJSON file path, or inline GeoJSON.",
+        ),
+    ] = None,
+    formats: Annotated[
+        list[Format] | None,
+        typer.Option(
+            "--format",
+            "-f",
+            envvar="OSMSG_FORMAT",
+            help="One or more output formats. Comma-separated when set via env.",
+        ),
+    ] = None,
     summary: Annotated[bool, typer.Option(help="Also write <name>_summary.parquet + summary.md.")] = False,
     changeset: Annotated[bool, typer.Option(hidden=True)] = False,
-    all_tags: Annotated[bool, typer.Option("--all-tags", help="Track every tag key.")] = False,
-    key_value: Annotated[bool, typer.Option("--key-value", help="Store key=value combos. Implies --all-tags.")] = False,
+    all_stats: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Collect all tag key=value stats and changeset metadata (hashtags, editors).",
+        ),
+    ] = False,
+    keys_only: Annotated[bool, typer.Option("--keys", help="Collect tag key stats only (no value breakdown).")] = False,
     exact_lookup: Annotated[
         bool, typer.Option("--exact-lookup", help="Hashtag whole-word match. Only meaningful with --hashtags.")
     ] = False,
     tm_stats: Annotated[bool, typer.Option("--tm-stats", help="Attach Tasking Manager totals.")] = False,
     update: Annotated[bool, typer.Option(help="Append to existing <name>.duckdb.")] = False,
     cache_dir: Annotated[
-        Path, typer.Option("--cache-dir", help="Cache dir for downloaded OSM files.")
+        Path,
+        typer.Option("--cache-dir", envvar="OSMSG_CACHE_DIR", help="Cache dir for downloaded OSM files."),
     ] = DEFAULT_CACHE_DIR,
     output_dir: Annotated[
         Path,
         typer.Option(
             "--output-dir",
+            envvar="OSMSG_OUTPUT_DIR",
             help="Where to write <name>.duckdb + selected formats. Defaults to current directory.",
         ),
     ] = Path("."),
@@ -175,7 +211,21 @@ def main(
             help="Read OSM password from stdin (one line). Else $OSM_PASSWORD, then prompt.",
         ),
     ] = False,
-    psql_dsn: Annotated[str | None, typer.Option("--psql-dsn", help="libpq DSN for --format psql.")] = None,
+    psql_dsn: Annotated[
+        str | None,
+        typer.Option("--psql-dsn", envvar="OSMSG_PSQL_DSN", help="libpq DSN for --format psql."),
+    ] = None,
+    changeset_pad_hours: Annotated[
+        int,
+        typer.Option(
+            "--changeset-pad-hours",
+            envvar="OSMSG_CHANGESET_PAD_HOURS",
+            help="Backward pad (hours) on first runs of changeset replication. "
+            "Set to 24 to capture long-running open changesets. --update runs skip the pad.",
+            min=0,
+            max=48,
+        ),
+    ] = 1,
 ) -> None:
     """Run osmsg."""
     if formats is None:
@@ -194,13 +244,13 @@ def main(
         end_date=_parse_dt(end),
         countries=country,
         urls=url or ["minute"],
+        url_explicit=url is not None,
         workers=workers,
         additional_tags=tags,
         hashtags=hashtags,
         length_tags=length,
         users_filter=users,
-        all_tags=all_tags or key_value,
-        key_value=key_value,
+        tag_mode="all" if all_stats else ("keys" if keys_only else "none"),
         exact_lookup=exact_lookup,
         changeset=changeset,
         summary=summary,
@@ -214,6 +264,7 @@ def main(
         osm_username=username,
         osm_password=_read_password_stdin() if password_stdin else None,
         psql_dsn=psql_dsn,
+        changeset_pad_hours=changeset_pad_hours,
     )
 
     if last is not None:

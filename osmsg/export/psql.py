@@ -1,64 +1,20 @@
-"""PostgreSQL exporter via DuckDB's postgres extension.
-
-No new Python dep — DuckDB attaches the target Postgres database, mirrors the
-osmsg schema, and runs `INSERT … SELECT` so the same DuckDB → Postgres copy
-benefits from streaming. The tables created on the Postgres side mirror the
-osmsg DuckDB schema, which makes both backends queryable identically.
-"""
-
-from __future__ import annotations
+"""PostgreSQL exporter via DuckDB's postgres extension."""
 
 import duckdb
 
-PG_SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    uid      BIGINT PRIMARY KEY,
-    username TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS changesets (
-    changeset_id BIGINT PRIMARY KEY,
-    uid          BIGINT NOT NULL REFERENCES users(uid),
-    created_at   TIMESTAMPTZ,
-    hashtags     TEXT[],
-    editor       TEXT,
-    min_lon      DOUBLE PRECISION,
-    min_lat      DOUBLE PRECISION,
-    max_lon      DOUBLE PRECISION,
-    max_lat      DOUBLE PRECISION
-);
-CREATE INDEX IF NOT EXISTS idx_changesets_created_at ON changesets(created_at);
-CREATE TABLE IF NOT EXISTS changeset_stats (
-    changeset_id   BIGINT NOT NULL REFERENCES changesets(changeset_id),
-    seq_id         BIGINT NOT NULL,
-    uid            BIGINT NOT NULL REFERENCES users(uid),
-    nodes_created  INTEGER DEFAULT 0,
-    nodes_modified INTEGER DEFAULT 0,
-    nodes_deleted  INTEGER DEFAULT 0,
-    ways_created   INTEGER DEFAULT 0,
-    ways_modified  INTEGER DEFAULT 0,
-    ways_deleted   INTEGER DEFAULT 0,
-    rels_created   INTEGER DEFAULT 0,
-    rels_modified  INTEGER DEFAULT 0,
-    rels_deleted   INTEGER DEFAULT 0,
-    poi_created    INTEGER DEFAULT 0,
-    poi_modified   INTEGER DEFAULT 0,
-    tag_stats      JSONB,
-    PRIMARY KEY (seq_id, changeset_id)
-);
-CREATE INDEX IF NOT EXISTS idx_changeset_stats_uid ON changeset_stats(uid);
-CREATE TABLE IF NOT EXISTS state (
-    source_url  TEXT PRIMARY KEY,
-    last_seq    BIGINT NOT NULL,
-    last_ts     TIMESTAMPTZ NOT NULL,
-    updated_at  TIMESTAMPTZ NOT NULL
-);
-"""
+from ..exceptions import OsmsgError
+from ..pg_schema import PG_SCHEMA
 
 
 def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
-    """Push every osmsg table into the libpq DSN target. DSN must be trusted (ATTACH interpolation)."""
+    """Push every osmsg table to the libpq DSN target.
+
+    DSN must be trusted — it is interpolated directly into the ATTACH statement.
+    """
     conn.execute("INSTALL postgres")
     conn.execute("LOAD postgres")
+    conn.execute("INSTALL spatial")
+    conn.execute("LOAD spatial")
     safe_dsn = dsn.replace("'", "''")
     conn.execute(f"ATTACH '{safe_dsn}' AS pg_target (TYPE postgres)")
     try:
@@ -67,11 +23,35 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str) -> None:
             if stmt:
                 conn.execute(f"CALL postgres_execute('pg_target', $${stmt}$$)")
 
-        # Tables with natural primary keys: ON CONFLICT DO NOTHING is a no-op safety net.
-        for table in ("users", "changesets", "changeset_stats"):
-            conn.execute(f"INSERT INTO pg_target.{table} SELECT * FROM {table} ON CONFLICT DO NOTHING")
+        # Refuse cross-source push: would double-count via the (seq_id, changeset_id) PK.
+        local_sources = {r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()}
+        existing_sources = {r[0] for r in conn.execute("SELECT source_url FROM pg_target.state").fetchall()}
+        cross_source = existing_sources - local_sources
+        if cross_source and local_sources:
+            raise OsmsgError(
+                f"PG target already has data from source(s) {sorted(cross_source)} "
+                f"but this run pushes from {sorted(local_sources)}. Mixing sources "
+                f"double-counts via the (seq_id, changeset_id) key. Use a separate "
+                f"--psql-dsn, or wipe the existing PG tables first."
+            )
 
-        # state is single-row-per-source: UPSERT to mirror the DuckDB-side truth.
+        conn.execute("INSERT INTO pg_target.users SELECT * FROM users ON CONFLICT DO NOTHING")
+
+        # Mirrors the DuckDB-side merge: newer non-NULL wins, NULL never downgrades.
+        conn.execute(
+            """
+            INSERT INTO pg_target.changesets AS c (changeset_id, uid, created_at, hashtags, editor, geom)
+            SELECT changeset_id, uid, created_at, hashtags, editor, geom FROM changesets
+            ON CONFLICT (changeset_id) DO UPDATE SET
+                created_at = COALESCE(EXCLUDED.created_at, c.created_at),
+                hashtags   = COALESCE(EXCLUDED.hashtags,   c.hashtags),
+                editor     = COALESCE(EXCLUDED.editor,     c.editor),
+                geom       = COALESCE(EXCLUDED.geom,       c.geom)
+            """
+        )
+
+        conn.execute("INSERT INTO pg_target.changeset_stats SELECT * FROM changeset_stats ON CONFLICT DO NOTHING")
+
         conn.execute(
             """
             INSERT INTO pg_target.state (source_url, last_seq, last_ts, updated_at)

@@ -1,0 +1,60 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from litestar import Litestar, get
+from litestar.config.cors import CORSConfig
+from litestar.contrib.jinja import JinjaTemplateEngine
+from litestar.openapi.config import OpenAPIConfig
+from litestar.openapi.plugins import SwaggerRenderPlugin
+from litestar.response import Template
+from litestar.template.config import TemplateConfig
+
+from .db import close_pool, ensure_schema, open_pool
+from .queries import fetch_state
+from .routers.v1 import v1_router
+from .schemas import HealthResponse
+
+TEMPLATES = Path(__file__).parent / "templates"
+
+
+@asynccontextmanager
+async def lifespan(app: Litestar):
+    await open_pool()
+    await ensure_schema()
+    try:
+        yield
+    finally:
+        await close_pool()
+
+
+@get("/", include_in_schema=False)
+async def home() -> Template:
+    return Template("home.html")
+
+
+@get("/health")
+async def health() -> HealthResponse:
+    try:
+        state = await fetch_state()
+    except Exception:
+        state = None
+    return HealthResponse(
+        status="ok",
+        last_seq=state["last_seq"] if state else None,
+        last_ts=state["last_ts"] if state else None,
+        updated_at=state["updated_at"] if state else None,
+    )
+
+
+app = Litestar(
+    route_handlers=[home, health, v1_router],
+    lifespan=[lifespan],
+    cors_config=CORSConfig(allow_origins=["*"]),
+    openapi_config=OpenAPIConfig(
+        title="OSMSG API",
+        version="1.0.0",
+        path="/docs",
+        render_plugins=[SwaggerRenderPlugin()],
+    ),
+    template_config=TemplateConfig(directory=TEMPLATES, engine=JinjaTemplateEngine),  # ty: ignore[invalid-argument-type]
+)

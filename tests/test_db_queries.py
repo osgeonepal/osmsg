@@ -24,11 +24,12 @@ def populated_db(fresh_db):
     conn.execute("INSERT INTO users VALUES (10, 'alice'), (20, 'bob')")
     conn.execute(
         """
-        INSERT INTO changesets (changeset_id, uid, created_at, hashtags, editor, min_lon, min_lat, max_lon, max_lat)
+        INSERT INTO changesets (changeset_id, uid, created_at, hashtags, editor, geom)
         VALUES
-            (1, 10, '2026-04-01 10:00:00+00', ['#hotosm-project-1', '#mapathon'], 'iD', 85.0, 27.0, 85.5, 27.5),
-            (2, 10, '2026-04-01 14:00:00+00', ['#mapathon'], 'iD', NULL, NULL, NULL, NULL),
-            (3, 20, '2026-04-02 09:00:00+00', NULL, 'JOSM', NULL, NULL, NULL, NULL)
+            (1, 10, '2026-04-01 10:00:00+00', ['#hotosm-project-1', '#mapathon'], 'iD',
+                ST_MakeEnvelope(85.0, 27.0, 85.5, 27.5)),
+            (2, 10, '2026-04-01 14:00:00+00', ['#mapathon'], 'iD', NULL),
+            (3, 20, '2026-04-02 09:00:00+00', NULL, 'JOSM', NULL)
         """
     )
     tag_stats_alice = json.dumps(
@@ -114,13 +115,20 @@ def test_attach_tag_stats_with_length(populated_db):
 
 def test_attach_tag_stats_all_tags_with_key_value(populated_db):
     rows = user_stats(populated_db)
-    attach_tag_stats(populated_db, rows, all_tags=True, key_value=True)
+    attach_tag_stats(populated_db, rows, tag_mode="all")
     alice = next(r for r in rows if r["name"] == "alice")
-    # plain key total
     assert alice["tags_create"]["building"] == 5
-    # key=value combo
     assert alice["tags_create"]["building=yes"] == 5
     assert alice["tags_create"]["highway=residential"] == 2
+
+
+def test_attach_tag_stats_keys_mode_omits_value_breakdown(populated_db):
+    rows = user_stats(populated_db)
+    attach_tag_stats(populated_db, rows, tag_mode="keys")
+    alice = next(r for r in rows if r["name"] == "alice")
+    assert alice["tags_create"]["building"] == 5
+    assert "building=yes" not in alice["tags_create"]
+    assert "highway=residential" not in alice["tags_create"]
 
 
 def test_daily_summary_groups_by_utc_date(populated_db):

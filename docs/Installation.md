@@ -3,12 +3,22 @@
 ## End user
 
 ```bash
+uvx --from osmsg osmsg --last hour    # zero-install, one-shot run
+# or
 pip install osmsg
 # or
 uv tool install osmsg
 ```
 
 Wheels include the compiled `pyosmium` extension; no system OSM tools are required.
+
+`uvx` (from [uv](https://docs.astral.sh/uv/)) runs osmsg in a managed, throwaway environment. handy for
+ad-hoc runs, CI jobs, and cron entries where you don't want to manage a venv. If a stale resolver cache
+ever picks an older release, add `--refresh`:
+
+```bash
+uvx --refresh --from osmsg osmsg --last hour
+```
 
 ## Docker
 
@@ -40,9 +50,22 @@ uv run pytest -m "not network"
 
 ### Pre-commit hooks
 
-`ruff` (lint + format), `ty` (Astral type checker), `markdownlint`, `commitizen` (conventional commits).
+`ruff` (lint + format), `ty` (Astral type checker), `uv-lock` (keeps `uv.lock` in sync with `pyproject.toml`),
+`markdownlint`, `commitizen` (conventional commits).
+
+Hooks run automatically on every `git commit` once you have run `uv run pre-commit install`. To run them manually:
+
+```bash
+uv run pre-commit run --all-files          # run every hook against the whole repo
+uv run pre-commit run ruff --all-files     # run a single hook
+uv run pre-commit run --files osmsg/cli.py # run hooks against specific files
+uv run pre-commit autoupdate               # bump hook versions in .pre-commit-config.yaml
+```
+
+If a hook auto-fixes a file (e.g. `ruff` reformats, `uv-lock` refreshes the lockfile), the commit is aborted:
+re-stage the changes and commit again.
 
 ### Tests
 
-- `pytest -m "not network"` — offline unit tests (handlers, queries, exporters, CLI).
-- `pytest -m network` — integration tests against Geofabrik / OSM (requires `OSM_USERNAME` / `OSM_PASSWORD`).
+- `pytest -m "not network"` for offline unit tests (handlers, queries, exporters, CLI).
+- `pytest -m network` for integration tests against Geofabrik / OSM (requires `OSM_USERNAME` / `OSM_PASSWORD`).

@@ -83,8 +83,7 @@ def _accumulate_tags(
     tag_stats: dict[str, dict[str, dict[str, Any]]],
     *,
     additional_tags: list[str] | None,
-    all_tags: bool,
-    key_value: bool,
+    tag_mode: str,
     length_tags: list[str] | None,
 ) -> None:
     if additional_tags:
@@ -101,13 +100,13 @@ def _accumulate_tags(
                 continue
             total = sum(float(v.get("len", 0) or 0) for v in vd.values())
             target[f"{k}_len_m"] = round(target.get(f"{k}_len_m", 0) + total)
-    if all_tags:
+    if tag_mode != "none":
         tc = target.setdefault("tags_create", {})
         tm = target.setdefault("tags_modify", {})
         for key, vd in tag_stats.items():
             tc[key] = tc.get(key, 0) + sum(int(v.get("c", 0)) for v in vd.values())
             tm[key] = tm.get(key, 0) + sum(int(v.get("m", 0)) for v in vd.values())
-            if key_value:
+            if tag_mode == "all":
                 for value, stat in vd.items():
                     kv = f"{key}={value}"
                     tc[kv] = tc.get(kv, 0) + int(stat.get("c", 0))
@@ -119,19 +118,18 @@ def attach_tag_stats(
     rows: list[dict[str, Any]],
     *,
     additional_tags: list[str] | None = None,
-    all_tags: bool = False,
-    key_value: bool = False,
+    tag_mode: str = "none",
     length_tags: list[str] | None = None,
 ) -> None:
     """In-place: parse the JSON tag_stats column once per row, then aggregate per user."""
     if not rows:
         return
-    if not (additional_tags or all_tags or length_tags):
+    if not (additional_tags or tag_mode != "none" or length_tags):
         return
 
     by_uid = {r["uid"]: r for r in rows}
     for r in rows:
-        if all_tags:
+        if tag_mode != "none":
             r.setdefault("tags_create", {})
             r.setdefault("tags_modify", {})
         for k in additional_tags or []:
@@ -153,12 +151,11 @@ def attach_tag_stats(
             by_uid[uid],
             payload,
             additional_tags=additional_tags,
-            all_tags=all_tags,
-            key_value=key_value,
+            tag_mode=tag_mode,
             length_tags=length_tags,
         )
 
-    if all_tags:
+    if tag_mode != "none":
         for r in rows:
             r["tags_create"] = dict(sorted(r.get("tags_create", {}).items(), key=lambda x: -x[1]))
             r["tags_modify"] = dict(sorted(r.get("tags_modify", {}).items(), key=lambda x: -x[1]))
@@ -168,8 +165,7 @@ def daily_summary(
     conn: duckdb.DuckDBPyConnection,
     *,
     additional_tags: list[str] | None = None,
-    all_tags: bool = False,
-    key_value: bool = False,
+    tag_mode: str = "none",
     length_tags: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per UTC day. Requires `changesets` populated (--changeset / --hashtags)."""
@@ -218,11 +214,11 @@ def daily_summary(
         if date in by_date:
             by_date[date]["editors"] = editors or []
 
-    if not (additional_tags or all_tags or length_tags):
+    if not (additional_tags or tag_mode != "none" or length_tags):
         return rows
 
     for r in rows:
-        if all_tags:
+        if tag_mode != "none":
             r.setdefault("tags_create", {})
             r.setdefault("tags_modify", {})
         for k in additional_tags or []:
@@ -248,12 +244,11 @@ def daily_summary(
             by_date[date],
             payload,
             additional_tags=additional_tags,
-            all_tags=all_tags,
-            key_value=key_value,
+            tag_mode=tag_mode,
             length_tags=length_tags,
         )
 
-    if all_tags:
+    if tag_mode != "none":
         for r in rows:
             r["tags_create"] = dict(sorted(r.get("tags_create", {}).items(), key=lambda x: -x[1]))
             r["tags_modify"] = dict(sorted(r.get("tags_modify", {}).items(), key=lambda x: -x[1]))

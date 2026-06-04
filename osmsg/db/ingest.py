@@ -114,12 +114,42 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
         if any(parquet_dir.glob("temp_*_users_*.parquet")):
             conn.execute(f"INSERT OR IGNORE INTO users SELECT uid, username FROM read_parquet('{pattern('users')}')")
         if any(parquet_dir.glob("temp_*_changesets_*.parquet")):
+            conn.execute("INSTALL spatial")
+            conn.execute("LOAD spatial")
             conn.execute(
                 f"""
                 INSERT OR IGNORE INTO changesets
                 SELECT changeset_id, uid, created_at, hashtags, editor,
-                       min_lon, min_lat, max_lon, max_lat
+                       CASE WHEN min_lon IS NOT NULL
+                           THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat)
+                       END
                 FROM read_parquet('{pattern("changesets")}')
+                """
+            )
+            # Newer non-NULL wins; dedupe src so multiple emits per window don't trip the PK on UPDATE.
+            conn.execute(
+                f"""
+                UPDATE changesets c
+                SET created_at = COALESCE(src.created_at, c.created_at),
+                    hashtags   = COALESCE(src.hashtags,   c.hashtags),
+                    editor     = COALESCE(src.editor,     c.editor),
+                    geom       = COALESCE(src.geom,       c.geom)
+                FROM (
+                    SELECT DISTINCT ON (changeset_id)
+                           changeset_id, created_at, hashtags, editor,
+                           CASE WHEN min_lon IS NOT NULL
+                               THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat)
+                           END AS geom
+                    FROM read_parquet('{pattern("changesets")}')
+                    ORDER BY changeset_id,
+                             (min_lon IS NOT NULL) DESC,
+                             (editor IS NOT NULL)  DESC,
+                             (hashtags IS NOT NULL) DESC,
+                             created_at DESC NULLS LAST
+                ) src
+                WHERE c.changeset_id = src.changeset_id
+                  AND (src.created_at IS NOT NULL OR src.hashtags IS NOT NULL
+                       OR src.editor IS NOT NULL OR src.geom IS NOT NULL)
                 """
             )
         if any(parquet_dir.glob("temp_*_changeset_stats_*.parquet")):
