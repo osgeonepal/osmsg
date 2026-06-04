@@ -30,6 +30,7 @@ from .replication import (
     SHORTCUTS,
     ChangesetReplication,
     changefile_download_urls,
+    changefile_seq_timestamp,
     resolve_url,
 )
 from .ui import info, progress_bar, warn
@@ -371,6 +372,8 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     valid_changesets: set[int] | None = None
     start_seq: int | None = None
     end_seq: int | None = None
+    # Threaded into changefile_download_urls so a tick never advances cf past cs.
+    cs_frontier_ts: dt.datetime | None = None
 
     if cfg.hashtags or cfg.changeset:
         cs_repl = ChangesetReplication(pad_hours=cfg.changeset_pad_hours)
@@ -384,11 +387,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         )
         info(f"Changesets: {len(urls)} files (seq {cs_start}-{cs_end}), {pad_note}.")
 
+        cs_frontier_ts = cs_repl.sequence_to_timestamp(cs_end)
+
         if urls:
             cs_dir.mkdir(parents=True, exist_ok=True)
             cs_config = _processing_config(cfg, parquet_dir=cs_dir, geom_wkt=geom_wkt)
             cs_config["window_start_utc"] = cfg.start_date.astimezone(UTC)
-            cs_config["window_end_utc"] = cfg.end_date.astimezone(UTC)
 
             _download_all(
                 urls, "changeset", max_workers, None, cfg.cache_dir, "changesets", description="Downloading changesets"
@@ -408,7 +412,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 conn,
                 source_url=CHANGESETS_REPLICATION,
                 last_seq=cs_end,
-                last_ts=cs_repl.sequence_to_timestamp(cs_end),
+                last_ts=cs_frontier_ts,
                 updated_at=dt.datetime.now(UTC),
             )
             info("Changeset processing complete.")
@@ -421,15 +425,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         info(f"Changefiles ← {url}")
         url_start, resume_seq = url_starts[url]
         urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(
-            url_start, cfg.end_date, url, resume_seq=resume_seq
+            url_start, cfg.end_date, url, resume_seq=resume_seq, cs_ts=cs_frontier_ts
         )
         if start_seq is None:
             start_seq = src_start_seq
         end_seq = src_end_seq
-        # Cap per URL only — never mutate cfg.end_date or sibling URLs lose their window.
-        url_end_date = min(cfg.end_date, server_ts)
         url_start_date_utc = url_start.astimezone(UTC)
-        url_end_date_utc = url_end_date.astimezone(UTC)
 
         gap = server_ts - url_start_date_utc
         info(
@@ -453,7 +454,6 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         cf_dir.mkdir(parents=True, exist_ok=True)
         cf_config = _processing_config(cfg, parquet_dir=cf_dir, geom_wkt=None)
         cf_config["start_date_utc"] = url_start_date_utc
-        cf_config["end_date_utc"] = url_end_date_utc
 
         _download_all(
             urls,
@@ -478,15 +478,18 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             description="Processing changefiles",
         )
         dbmod.merge_parquet_files(conn, cf_dir, cleanup=True)
+        # state.last_ts is the seq_ts of last_seq so the next tick's lower-bound filter
+        # aligns with the seq boundary.
+        state_last_ts = changefile_seq_timestamp(url, src_end_seq)
         upsert_state(
             conn,
             source_url=url,
             last_seq=src_end_seq,
-            last_ts=url_end_date,
+            last_ts=state_last_ts,
             updated_at=dt.datetime.now(UTC),
         )
-        lag = server_ts - url_end_date_utc
-        info(f"  DB now current to: {url_end_date_utc.isoformat()}  |  lag from server: {lag}")
+        lag = server_ts - state_last_ts
+        info(f"  DB now current to: {state_last_ts.isoformat()}  |  lag from server: {lag}")
         info(f"Changefile processing complete: {url}")
 
     if cfg.delete_temp:

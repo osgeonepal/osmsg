@@ -233,6 +233,9 @@ def main(
     if sum(1 for x in (start, last, days) if x) > 1:
         error("--start, --last, and --days are mutually exclusive — pick one.")
         raise typer.Exit(code=2)
+    if update and any(x is not None for x in (start, end, last, days)):
+        error("--update resumes from prior state and runs to head; it ignores --start/--end/--last/--days.")
+        raise typer.Exit(code=2)
     if Format.psql in formats and not psql_dsn:
         error("-f psql requires --psql-dsn (libpq connection string, e.g. 'host=localhost dbname=osm user=osm').")
         raise typer.Exit(code=2)
