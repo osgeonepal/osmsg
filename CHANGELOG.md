@@ -1,3 +1,10 @@
+## v1.1.2 (2026-06-04)
+
+### Fix
+
+- **replication**: fix last sequence on update missing stats
+- **update**: fix hte update bug on tick
+
 ## v1.1.1 (2026-05-21)
 
 ### Fix
