@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS changesets (
     geom         GEOMETRY(POLYGON)
 );
 CREATE INDEX IF NOT EXISTS idx_changesets_created_at ON changesets(created_at);
+CREATE INDEX IF NOT EXISTS idx_changesets_hashtags ON changesets USING GIN (hashtags);
+CREATE INDEX IF NOT EXISTS idx_changesets_editor ON changesets(editor);
 CREATE INDEX IF NOT EXISTS idx_changesets_geom ON changesets USING GIST (geom);
 CREATE TABLE IF NOT EXISTS changeset_stats (
     changeset_id   BIGINT NOT NULL REFERENCES changesets(changeset_id),
@@ -33,6 +35,7 @@ CREATE TABLE IF NOT EXISTS changeset_stats (
     PRIMARY KEY (seq_id, changeset_id)
 );
 CREATE INDEX IF NOT EXISTS idx_changeset_stats_uid ON changeset_stats(uid);
+CREATE INDEX IF NOT EXISTS idx_changeset_stats_changeset_id ON changeset_stats(changeset_id);
 CREATE TABLE IF NOT EXISTS state (
     source_url  TEXT PRIMARY KEY,
     last_seq    BIGINT NOT NULL,

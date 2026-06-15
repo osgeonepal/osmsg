@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,7 +21,8 @@ TEMPLATES = Path(__file__).parent / "templates"
 @asynccontextmanager
 async def lifespan(app: Litestar):
     await open_pool()
-    await ensure_schema()
+    if os.getenv("OSMSG_SKIP_SCHEMA_ENSURE", "").lower() not in {"1", "true", "yes"}:
+        await ensure_schema()
     try:
         yield
     finally:

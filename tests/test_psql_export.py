@@ -57,7 +57,7 @@ def test_pg_schema_statements_each_parse_with_postgres_extension():
     conn.execute("LOAD spatial")
     for stmt in [s.strip() for s in duckdb_clone.split(";") if s.strip()]:
         upper = stmt.upper()
-        if upper.startswith("CREATE EXTENSION") or "USING GIST" in upper:
+        if upper.startswith("CREATE EXTENSION") or "USING GIST" in upper or "USING GIN" in upper:
             continue
         conn.execute(stmt)
     tables = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.tables").fetchall()}
