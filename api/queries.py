@@ -92,7 +92,7 @@ def _user_stats_sql(*, filter_dates: bool, filter_hashtags: bool, include_tags: 
         scope_cte = "WITH stats_scope AS (SELECT * FROM changeset_stats)"
 
     tag_ctes = _TAG_CTES if include_tags else ""
-    tag_select = "tpu.tag_stats" if include_tags else "NULL::jsonb AS tag_stats"
+    tag_select = "COALESCE(tpu.tag_stats, '{}'::jsonb) AS tag_stats" if include_tags else "NULL::jsonb AS tag_stats"
     tag_join = "LEFT JOIN tag_per_user tpu ON tpu.uid = u.uid" if include_tags else ""
     tag_group = ", tpu.tag_stats" if include_tags else ""
 
@@ -162,6 +162,8 @@ def _changeset_filters_sql(*, filter_dates: bool, filter_hashtags: bool = False)
 
 def _hashtag_stats_sql(*, filter_dates: bool, filter_hashtags: bool) -> str:
     where_sql, n = _changeset_filters_sql(filter_dates=filter_dates, filter_hashtags=filter_hashtags)
+    hashtag_param = f"${n - 1}" if filter_hashtags else None
+    hashtag_value_filter = f"AND ht.hashtag = ANY({hashtag_param}::TEXT[])" if hashtag_param else ""
     limit_param = f"${n}"
     offset_param = f"${n + 1}"
     map_changes = _map_changes_expr()
@@ -176,6 +178,7 @@ def _hashtag_stats_sql(*, filter_dates: bool, filter_hashtags: bool) -> str:
             JOIN changeset_stats st ON st.changeset_id = cs.changeset_id
             CROSS JOIN LATERAL UNNEST(cs.hashtags) AS ht(hashtag)
             {where_sql}
+            {hashtag_value_filter}
         ),
         hashtag_totals AS (
             SELECT
@@ -200,6 +203,8 @@ def _hashtag_stats_sql(*, filter_dates: bool, filter_hashtags: bool) -> str:
 
 def _hashtag_trends_sql(*, filter_hashtags: bool) -> str:
     where_sql, n = _changeset_filters_sql(filter_dates=True, filter_hashtags=filter_hashtags)
+    hashtag_param = f"${n - 1}" if filter_hashtags else None
+    hashtag_value_filter = f"AND ht.hashtag = ANY({hashtag_param}::TEXT[])" if hashtag_param else ""
     interval_param = f"${n}"
     limit_param = f"${n + 1}"
     offset_param = f"${n + 2}"
@@ -215,6 +220,7 @@ def _hashtag_trends_sql(*, filter_hashtags: bool) -> str:
         JOIN changeset_stats st ON st.changeset_id = cs.changeset_id
         CROSS JOIN LATERAL UNNEST(cs.hashtags) AS ht(hashtag)
         {where_sql}
+        {hashtag_value_filter}
         GROUP BY period_start, ht.hashtag
         ORDER BY period_start ASC, map_changes DESC, ht.hashtag ASC
         LIMIT {limit_param} OFFSET {offset_param}

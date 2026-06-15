@@ -311,6 +311,7 @@ def test_user_stats_sql_omits_tag_ctes_when_tags_false():
     sql_with = _user_stats_sql(filter_dates=False, filter_hashtags=False, include_tags=True)
     sql_without = _user_stats_sql(filter_dates=False, filter_hashtags=False, include_tags=False)
     assert "tag_per_user" in sql_with
+    assert "COALESCE(tpu.tag_stats, '{}'::jsonb) AS tag_stats" in sql_with
     assert "tag_per_user" not in sql_without
     assert "NULL::jsonb AS tag_stats" in sql_without
     assert "user_hashtags" in sql_without
@@ -322,6 +323,7 @@ def test_hashtag_stats_sql_uses_array_overlap_and_lateral_unnest():
     sql = _hashtag_stats_sql(filter_dates=True, filter_hashtags=True)
     assert "CROSS JOIN LATERAL UNNEST(cs.hashtags)" in sql
     assert "cs.hashtags && $3::TEXT[]" in sql
+    assert "ht.hashtag = ANY($3::TEXT[])" in sql
     assert "LIMIT $4 OFFSET $5" in sql
 
 
@@ -333,6 +335,15 @@ def test_hashtag_trends_sql_uses_bounded_date_range():
     assert "cs.created_at >= $1" in sql
     assert "cs.created_at < $2" in sql
     assert "LIMIT $4 OFFSET $5" in sql
+
+
+def test_hashtag_trends_sql_filters_unnested_hashtags_when_requested():
+    from api.queries import _hashtag_trends_sql
+
+    sql = _hashtag_trends_sql(filter_hashtags=True)
+    assert "cs.hashtags && $3::TEXT[]" in sql
+    assert "ht.hashtag = ANY($3::TEXT[])" in sql
+    assert "DATE_TRUNC($4, cs.created_at)" in sql
 
 
 def test_editor_stats_sql_groups_blank_editors_as_unknown():
