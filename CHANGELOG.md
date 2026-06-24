@@ -1,3 +1,9 @@
+## v1.2.1 (2026-06-24)
+
+### Fix
+
+- **chore**: cleanup and adds progress bar in the hf download
+
 ## v1.2.0 (2026-06-24)
 
 ### Feat
