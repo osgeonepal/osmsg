@@ -78,8 +78,8 @@ osmsg --last day -f psql --psql-dsn "host=localhost dbname=osm user=osm"
 > duplicating data.
 
 `<name>.duckdb` is stamped with the query that built it. Rerunning the same query with a different `-f`
-re-exports from that store instead of refetching, so adding a format is instant. Changing any query
-parameter (window, hashtags, tags, boundary) recomputes; `--overwrite` forces a fresh recompute.
+re-exports straight from that store, so adding a format is instant. Changing any query parameter
+(window, hashtags, tags, boundary) recomputes; `--overwrite` forces a fresh recompute.
 
 ## Config file
 

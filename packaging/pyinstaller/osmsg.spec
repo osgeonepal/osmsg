@@ -1,5 +1,5 @@
-# PyInstaller spec for a one-file osmsg.exe. The native deps (osmium, duckdb, pyarrow, shapely)
-# ship compiled extensions + data files, so collect each fully rather than rely on import analysis.
+# PyInstaller spec for the windowed osmsg.exe (the desktop UI). The native deps (osmium, duckdb,
+# pyarrow, shapely) ship compiled extensions + data files, so collect each fully.
 from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = [], [], []
@@ -10,14 +10,14 @@ for pkg in ("osmium", "duckdb", "pyarrow", "shapely", "typer", "typer_config", "
     hiddenimports += h
 
 a = Analysis(
-    ["entry.py"],
+    ["gui_entry.py"],
     pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest"],
+    excludes=["matplotlib", "pytest"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -28,7 +28,7 @@ exe = EXE(
     a.datas,
     [],
     name="osmsg",
-    console=True,
+    console=False,
     onefile=True,
     upx=False,
 )

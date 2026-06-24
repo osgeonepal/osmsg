@@ -27,8 +27,12 @@ jobs:
       - name: Build osmsg.exe
         run: uv run pyinstaller --clean --noconfirm packaging/pyinstaller/osmsg.spec
 
-      - name: Smoke-test the exe
-        run: dist\osmsg.exe --version
+      - name: Verify the exe built
+        run: |
+          if (-not (Test-Path dist\osmsg.exe)) { throw "osmsg.exe not produced" }
+          $size = (Get-Item dist\osmsg.exe).Length
+          Write-Host "osmsg.exe size: $size bytes"
+          if ($size -lt 10000000) { throw "osmsg.exe is implausibly small" }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

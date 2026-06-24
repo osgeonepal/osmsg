@@ -46,7 +46,8 @@ brew install osgeonepal/tap/osmsg          # macOS / Linux (Homebrew tap)
 ```
 
 On Windows, download `osmsg.exe` from the [latest release](https://github.com/osgeonepal/osmsg/releases)
-and run it directly, no Python required.
+and double-click it to open the desktop app. Fill in the dates and options, click Run, and open the
+output folder. The CLI below is for macOS, Linux, and pip/uv users.
 
 ## Quick start
 
@@ -205,7 +206,7 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--history` / `--no-history` | `OSMSG_HISTORY` | on | Read covered months from the published dataset. |
 | `--history-url` | `OSMSG_HISTORY_URL` | `osmsg-history` | Published dataset location. |
 | `--insert` | (none) | off | Load history into the store and seed resume, then exit. No window loads all of it. |
-| `--osh-file` / `--changeset-file` | (none) | unset | Insert from local planet history + changeset files instead of the dataset. |
+| `--osh-file` / `--changeset-file` | (none) | unset | Insert from local planet history + changeset files. |
 | `--changeset-pad-hours` | `OSMSG_CHANGESET_PAD_HOURS` | `1` | See below. |
 | (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP` | `hour` | `hour`, `day`, or `week`. Used when `--update` runs against an empty DB. |
 | (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP_DAYS` | unset | Integer N; overrides `OSMSG_BOOTSTRAP`. |

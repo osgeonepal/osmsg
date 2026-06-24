@@ -19,7 +19,7 @@ docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last 
 ```
 
 On Windows, grab `osmsg.exe` from the [latest release](https://github.com/osgeonepal/osmsg/releases)
-and run it , no Python required.
+and double-click it to open the desktop app.
 
 ---
 
@@ -39,6 +39,7 @@ Homebrew always uses `user/tap/formula` and the tap repo must be named `homebrew
 stays until osmsg is accepted into homebrew-core (then it becomes plain `brew install osmsg`).
 Validate on macOS: `brew install --build-from-source ./Formula/osmsg.rb`.
 
-**Windows .exe** (`pyinstaller/` + `../.github/workflows/windows-exe.yml`) , PyInstaller one-file,
-built on a `windows-latest` GitHub Actions runner. Push a version tag to build it and attach it to
-the Release; `workflow_dispatch` builds on demand.
+**Windows .exe** (`pyinstaller/` + `../.github/workflows/windows-exe.yml`) , PyInstaller one-file
+windowed build of the tkinter desktop UI (`osmsg.gui:launch` via `gui_entry.py`), built on a
+`windows-latest` GitHub Actions runner. Push a version tag to build it and attach it to the Release;
+`workflow_dispatch` builds on demand.

@@ -41,6 +41,9 @@ repository = "https://github.com/osgeonepal/osmsg"
 [project.scripts]
 osmsg = "osmsg.cli:app"
 
+[project.gui-scripts]
+osmsg-gui = "osmsg.gui:launch"
+
 [build-system]
 requires = ["uv_build>=0.5.15,<0.9"]
 build-backend = "uv_build"

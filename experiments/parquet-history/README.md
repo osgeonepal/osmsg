@@ -1,7 +1,7 @@
 # Historical parquet datasets
 
 osmsg precomputes OSM history into time-partitioned parquet published on HuggingFace, so past-window
-queries read remotely instead of re-downloading replication diffs. The read side is built into osmsg
+queries are served remotely from the published parquet. The read side is built into osmsg
 (`osmsg --start ... --end ...` serves covered months from the dataset, `osmsg --insert` loads it into
 a store). The build and publish side is the `osmsg maintain` subcommand group; this directory holds
 only the server batch script that wraps it.
