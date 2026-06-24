@@ -83,7 +83,9 @@ re-exports straight from that store, so adding a format is instant. Changing any
 
 ## Config file
 
-Long invocations are easier to maintain in YAML. Keys mirror the CLI flag names.
+Long invocations are easier to maintain in YAML. Each key is the option's underscore name (the flag
+with `-` turned to `_`, so `output_dir`, `history_url`, `psql_dsn`); `--all` is `all_stats` and
+`--keys` is `keys_only`. A key that matches no option is ignored.
 
 ```bash
 osmsg --config nepal.yaml                      # all flags from yaml

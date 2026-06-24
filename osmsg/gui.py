@@ -15,6 +15,26 @@ from .pipeline import RunConfig, run
 
 UTC = dt.UTC
 FORMATS = ["parquet", "csv", "json", "markdown"]
+PRESETS = ["Last hour", "Last day", "Last week", "Last month", "Last year", "All time"]
+_PRESET_DELTAS = {
+    "Last hour": dt.timedelta(hours=1),
+    "Last day": dt.timedelta(days=1),
+    "Last week": dt.timedelta(days=7),
+    "Last month": dt.timedelta(days=30),
+    "Last year": dt.timedelta(days=365),
+}
+
+
+def preset_range(name: str, now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime]:
+    """Resolve a quick-range label to a (start, end) window."""
+    now = now or dt.datetime.now(UTC)
+    if name == "All time":
+        return dt.datetime(2005, 1, 1, tzinfo=UTC), now
+    return now - _PRESET_DELTAS[name], now
+
+
+def _fmt(when: dt.datetime) -> str:
+    return when.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _parse_date(value: str) -> dt.datetime | None:
@@ -112,30 +132,44 @@ class App:
             ttk.Entry(frame, textvariable=var, width=40).grid(row=i, column=1, columnspan=3, sticky="we", pady=2)
             self.vars[key] = var
 
+        preset_frame = ttk.LabelFrame(frame, text="Quick range", padding=6)
+        preset_frame.grid(row=5, column=0, columnspan=4, sticky="we", pady=6)
+        for i, name in enumerate(PRESETS):
+            ttk.Button(preset_frame, text=name, width=11, command=lambda n=name: self._apply_preset(n)).grid(
+                row=0, column=i, padx=2
+            )
+
         self.vars["all_tags"] = tk.BooleanVar()
         self.vars["summary"] = tk.BooleanVar()
-        ttk.Checkbutton(frame, text="All tags", variable=self.vars["all_tags"]).grid(row=5, column=0, sticky="w")
-        ttk.Checkbutton(frame, text="Daily summary", variable=self.vars["summary"]).grid(row=5, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="All tags", variable=self.vars["all_tags"]).grid(row=6, column=0, sticky="w")
+        ttk.Checkbutton(frame, text="Daily summary", variable=self.vars["summary"]).grid(row=6, column=1, sticky="w")
 
         fmt_frame = ttk.LabelFrame(frame, text="Formats", padding=6)
-        fmt_frame.grid(row=6, column=0, columnspan=4, sticky="we", pady=6)
+        fmt_frame.grid(row=7, column=0, columnspan=4, sticky="we", pady=6)
         for i, name in enumerate(FORMATS):
             var = tk.BooleanVar(value=name in ("parquet", "csv"))
             ttk.Checkbutton(fmt_frame, text=name, variable=var).grid(row=0, column=i, padx=4)
             self.vars[name] = var
 
         self.out_label = ttk.Label(frame, text=f"Output: {self.out_dir}")
-        self.out_label.grid(row=7, column=0, columnspan=3, sticky="w")
-        ttk.Button(frame, text="Choose folder", command=self._choose_folder).grid(row=7, column=3, sticky="e")
+        self.out_label.grid(row=8, column=0, columnspan=3, sticky="w")
+        ttk.Button(frame, text="Choose folder", command=self._choose_folder).grid(row=8, column=3, sticky="e")
 
-        self.run_btn = ttk.Button(frame, text="Run", command=self._on_run)
-        self.run_btn.grid(row=8, column=0, pady=8, sticky="w")
+        self.run_btn = ttk.Button(frame, text="Compute", command=self._on_run)
+        self.run_btn.grid(row=9, column=0, pady=8, sticky="w")
         self.open_btn = ttk.Button(frame, text="Open output folder", command=lambda: _open_folder(Path(self.out_dir)))
-        self.open_btn.grid(row=8, column=1, pady=8, sticky="w")
+        self.open_btn.grid(row=9, column=1, pady=8, sticky="w")
+        self.spinner = ttk.Progressbar(frame, mode="indeterminate", length=160)
+        self.spinner.grid(row=9, column=2, columnspan=2, pady=8, sticky="we")
 
         self.log = scrolledtext.ScrolledText(frame, width=70, height=14, state="disabled")
-        self.log.grid(row=9, column=0, columnspan=4, sticky="nsew")
+        self.log.grid(row=10, column=0, columnspan=4, sticky="nsew")
         self.root.after(120, self._drain)
+
+    def _apply_preset(self, name: str) -> None:
+        start, end = preset_range(name)
+        self.vars["start"].set(_fmt(start))
+        self.vars["end"].set(_fmt(end))
 
     def _choose_folder(self) -> None:
         chosen = self._filedialog.askdirectory(initialdir=self.out_dir)
@@ -155,8 +189,9 @@ class App:
         except OsmsgError as exc:
             self._append(f"\n{exc}\n")
             return
-        self.run_btn.config(state="disabled")
-        self._append(f"\nRunning into {self.out_dir} ...\n")
+        self.run_btn.config(state="disabled", text="Running...")
+        self.spinner.start(12)
+        self._append(f"\nComputing into {self.out_dir} ...\n")
         threading.Thread(target=self._worker, args=(cfg,), daemon=True).start()
 
     def _worker(self, cfg: RunConfig) -> None:
@@ -182,7 +217,8 @@ class App:
                     self._append(payload)
                 else:
                     self._append(f"\n{payload}\n")
-                    self.run_btn.config(state="normal")
+                    self.spinner.stop()
+                    self.run_btn.config(state="normal", text="Compute")
         except queue.Empty:
             pass
         self.root.after(120, self._drain)

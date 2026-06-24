@@ -5,9 +5,10 @@ import datetime as dt
 import pytest
 
 from osmsg.exceptions import OsmsgError
-from osmsg.gui import build_config
+from osmsg.gui import PRESETS, build_config, preset_range
 
 UTC = dt.UTC
+NOW = dt.datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 
 
 def test_build_config_maps_fields(tmp_path):
@@ -54,3 +55,16 @@ def test_build_config_requires_format(tmp_path):
 def test_build_config_rejects_bad_date(tmp_path):
     with pytest.raises(OsmsgError, match="date"):
         build_config({"start": "01/01/2024", "parquet": True}, str(tmp_path))
+
+
+def test_preset_range_rolling_windows():
+    assert preset_range("Last hour", NOW) == (NOW - dt.timedelta(hours=1), NOW)
+    assert preset_range("Last day", NOW) == (NOW - dt.timedelta(days=1), NOW)
+    assert preset_range("Last month", NOW) == (NOW - dt.timedelta(days=30), NOW)
+    assert preset_range("All time", NOW) == (dt.datetime(2005, 1, 1, tzinfo=UTC), NOW)
+
+
+def test_every_preset_resolves():
+    for name in PRESETS:
+        start, end = preset_range(name, NOW)
+        assert start < end

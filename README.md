@@ -46,8 +46,9 @@ brew install osgeonepal/tap/osmsg          # macOS / Linux (Homebrew tap)
 ```
 
 On Windows, download `osmsg.exe` from the [latest release](https://github.com/osgeonepal/osmsg/releases)
-and double-click it to open the desktop app. Fill in the dates and options, click Run, and open the
-output folder. The CLI below is for macOS, Linux, and pip/uv users.
+and double-click it to open the desktop app. Pick a Quick range (last hour, day, week, month, year, or
+all time) or type your own dates, set the options, click Compute, and open the output folder. The CLI
+below is for macOS, Linux, and pip/uv users.
 
 ## Quick start
 
@@ -175,7 +176,8 @@ Same pipeline as the CLI.
 osmsg --config nepal.yaml
 ```
 
-Any flag works as a YAML key. See [docs/Manual.md](./docs/Manual.md) for the full list.
+Each option is a YAML key written with its underscore name: `output_dir`, `history_url`, `all_stats`,
+`formats`, `psql_dsn`, and so on (not the dashed flag). See [docs/Manual.md](./docs/Manual.md).
 
 ## Output formats
 
