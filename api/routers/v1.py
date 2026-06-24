@@ -44,7 +44,7 @@ class StatsController(Controller):
             list[str] | None, Parameter(description="Filter to changesets carrying any of these hashtags. Repeatable.")
         ] = None,
         tags: Annotated[bool, Parameter(description="Include per-user tag_stats breakdown in the response.")] = True,
-        limit: Annotated[int, Parameter(ge=1, le=1000, description="Page size (1–1000).")] = 100,
+        limit: Annotated[int, Parameter(ge=1, le=1000, description="Page size (1 to 1000).")] = 100,
         offset: Annotated[int, Parameter(ge=0, description="Page offset.")] = 0,
     ) -> UserStatsResponse:
         start = start or (datetime.min.replace(tzinfo=UTC) if end else None)

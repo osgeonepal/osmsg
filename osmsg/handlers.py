@@ -56,7 +56,7 @@ class ChangesetHandler(osmium.SimpleHandler):
 
         keep = bool(cfg["changeset_meta"] and not cfg["hashtags"])
         # Some editors only fill the `hashtags` tag (comment stays generic); checking
-        # comment alone silently drops those. Tokenize via regex on both — real data
+        # comment alone silently drops those. Tokenize via regex on both, real data
         # mixes `;`, space, and comma as separators inside `hashtags`.
         comment = c.tags.get("comment", "")
         hashtags_field = c.tags.get("hashtags", "")

@@ -10,9 +10,9 @@ from osmsg.handlers import ChangefileHandler, ChangesetHandler
 
 
 def _write_changeset_xml(tmp_path, name, changesets):
-    """Hand-written changeset XML — osmium's SimpleWriter doesn't support changesets.
+    """Hand-written changeset XML, osmium's SimpleWriter doesn't support changesets.
 
-    Pass ``open=True`` to emit a still-open entry (no ``closed_at`` attribute) — that
+    Pass ``open=True`` to emit a still-open entry (no ``closed_at`` attribute), that
     matches what OSM replication serializes for changesets that haven't closed yet,
     and is what osmium turns into ``closed_at = 1970-01-01`` (the epoch sentinel).
     """
@@ -488,7 +488,7 @@ def test_changefile_handler_drops_data_outside_window(osc_factory, changefile_co
     changefile_config["start_date_utc"] = dt.datetime(2026, 4, 1, tzinfo=dt.UTC)
     changefile_config["end_date_utc"] = dt.datetime(2026, 4, 2, tzinfo=dt.UTC)
 
-    # Without an explicit timestamp, osmium's apply_file uses 1970 — outside our window.
+    # Without an explicit timestamp, osmium's apply_file uses 1970, outside our window.
     osc = osc_factory(
         "003.osc",
         [("node", {"id": 1, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {"amenity": "cafe"}})],
@@ -613,11 +613,11 @@ def test_changefile_handler_hashtags_and_users_intersect(osc_factory, changefile
     osc = osc_factory(
         "intersect.osc",
         [
-            # changeset 1 by alice — kept (in valid_changesets AND in whitelist)
+            # changeset 1 by alice, kept (in valid_changesets AND in whitelist)
             ("node", {"id": 1, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {"amenity": "cafe"}}),
-            # changeset 1 by bob — dropped (in valid_changesets but NOT in whitelist)
+            # changeset 1 by bob, dropped (in valid_changesets but NOT in whitelist)
             ("node", {"id": 2, "version": 1, "uid": 20, "user": "bob", "changeset": 1, "tags": {"amenity": "bar"}}),
-            # changeset 3 by alice — dropped (in whitelist but NOT in valid_changesets)
+            # changeset 3 by alice, dropped (in whitelist but NOT in valid_changesets)
             ("node", {"id": 3, "version": 1, "uid": 10, "user": "alice", "changeset": 3, "tags": {"amenity": "shop"}}),
         ],
     )
@@ -645,7 +645,7 @@ def test_changefile_handler_empty_valid_changesets_drops_everything(osc_factory,
 
 
 def test_changefile_handler_none_valid_changesets_means_no_filter(osc_factory, changefile_config):
-    """None means 'no filter active' — collect everything that passes other filters."""
+    """None means 'no filter active', collect everything that passes other filters."""
     osc = osc_factory(
         "nofilter.osc",
         [

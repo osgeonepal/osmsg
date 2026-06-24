@@ -122,6 +122,7 @@ def test_pipeline_state_last_ts_is_seq_aligned(tmp_path, monkeypatch):
         formats=["parquet"],
         changeset=False,
         tag_mode="none",
+        history_mode="off",  # this test exercises the live state-alignment path only
     )
     run(cfg)
 
@@ -169,7 +170,7 @@ def test_resolve_url_starts_update_reads_each_url_state_row(tmp_path):
 
 
 def test_resolve_url_starts_update_resume_seq_is_last_seq_plus_one(tmp_path):
-    """--update must resume at last_seq + 1 — no overlap, no gap, no backward pad."""
+    """--update must resume at last_seq + 1, no overlap, no gap, no backward pad."""
     conn = _open_db(tmp_path)
     ts = dt.datetime(2026, 5, 1, tzinfo=dt.UTC)
     upsert_state(conn, source_url="https://planet", last_seq=12345, last_ts=ts, updated_at=ts)
@@ -332,7 +333,7 @@ def test_auto_switch_suppressed_by_url_explicit():
 
 
 def test_auto_switch_suppressed_by_update():
-    """--update must never auto-switch — cross-URL replay would double-count via (seq_id, changeset_id)."""
+    """--update must never auto-switch, cross-URL replay would double-count via (seq_id, changeset_id)."""
     cfg = RunConfig(urls=[SHORTCUTS["minute"]], update=True)
     _auto_switch_replication(cfg, dt.timedelta(days=30))
     assert cfg.urls == [SHORTCUTS["minute"]]

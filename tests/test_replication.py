@@ -133,7 +133,7 @@ def changefile_repl(monkeypatch):
 
 
 def test_changefile_download_urls_resume_seq_skips_backward_pad(changefile_repl):
-    """resume_seq must be used exactly — no 60-minute backward pad."""
+    """resume_seq must be used exactly, no 60-minute backward pad."""
     from osmsg.replication import changefile_download_urls
 
     cur_seq, cur_ts = changefile_repl
