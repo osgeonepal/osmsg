@@ -19,7 +19,6 @@ def read_blob(handle) -> tuple[bytes, bytes, str] | None:
 
 
 def _parse_blobheader(buf: bytes) -> tuple[str, int]:
-    # BlobHeader: field 1 = type (length-delimited string), field 3 = datasize (varint).
     blob_type, datasize, i = "", 0, 0
     while i < len(buf):
         key = buf[i]

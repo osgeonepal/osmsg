@@ -12,9 +12,6 @@ from ..exceptions import OsmsgError
 from .parquet import GEOM_COLS, MORTON_MACROS, write_partitions
 
 UTC = dt.UTC
-# Planet-wide edits are continuous, so a complete month reaches within minutes of its end. A larger
-# shortfall means the source day diffs did not cover the whole month (a mid-day snapshot or lagging
-# replication), so the partition would be published short, the exact gap the read-side backstep masks.
 COMPLETENESS_TOLERANCE = dt.timedelta(hours=1)
 
 

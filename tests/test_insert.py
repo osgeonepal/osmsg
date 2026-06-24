@@ -28,16 +28,14 @@ def _record_seeds(monkeypatch):
 
 def test_insert_remote_populates_store_and_seeds(tmp_path, monkeypatch):
     calls = _record_seeds(monkeypatch)
-    _build_dataset(tmp_path)  # changesets/changefiles/manifest covering 2024-01
+    _build_dataset(tmp_path)
     out = tmp_path / "store"
     result = run(RunConfig(name="ins", insert=True, history_url=str(tmp_path), output_dir=out, urls=["minute"]))
 
     assert result["rows"] == 3
     db = duckdb.connect(str(out / "ins.duckdb"), read_only=True)
     assert db.execute("SELECT count(*) FROM changeset_stats WHERE seq_id=0").fetchone()[0] == 3
-    # resume seeded one day before the published frontier (2024-02-01)
     assert calls and calls[0][0] == dt.datetime(2024, 1, 31, tzinfo=UTC)
-    # the catch-up gap is years, so insert auto-seeds day (not the minute default) for a fast --update
     assert calls[0][1] == SHORTCUTS["day"]
 
 
@@ -56,10 +54,9 @@ def test_insert_remote_slice_resumes_at_window_end(tmp_path, monkeypatch):
             end_date=dt.datetime(2024, 1, 16, tzinfo=UTC),
         )
     )
-    # only cs100 (Jan 10) and cs200 (Jan 15) fall in the slice; cs300 (Jan 20) is excluded
     db = duckdb.connect(str(out / "ins.duckdb"), read_only=True)
     assert db.execute("SELECT count(*) FROM changeset_stats WHERE seq_id=0").fetchone()[0] == 2
-    assert calls[0][0] == dt.datetime(2024, 1, 15, tzinfo=UTC)  # window end minus one day
+    assert calls[0][0] == dt.datetime(2024, 1, 15, tzinfo=UTC)
 
 
 def test_insert_local_files_populates_store_and_seeds(tmp_path, monkeypatch):
@@ -86,4 +83,4 @@ def test_insert_local_files_populates_store_and_seeds(tmp_path, monkeypatch):
     db = duckdb.connect(str(out / "ins.duckdb"), read_only=True)
     assert db.execute("SELECT count(*) FROM changeset_stats WHERE seq_id=0").fetchone()[0] == 3
     assert db.execute("SELECT count(*) FROM changesets").fetchone()[0] == 3
-    assert calls[0][0] == dt.datetime(2024, 12, 31, tzinfo=UTC)  # window end minus one day
+    assert calls[0][0] == dt.datetime(2024, 12, 31, tzinfo=UTC)

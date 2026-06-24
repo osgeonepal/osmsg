@@ -1,7 +1,5 @@
 """Convert a planet .osh history plus a changeset dump into the changefiles/changesets parquet
-datasets, out of core via osmsg's own DuckDB tables. Streams raw per-edit rows to parquet in bounded
-batches, then aggregates and joins in DuckDB (a changeset's edits are scattered across the .osh, so an
-in-memory pass OOMs at planet scale)."""
+datasets, out of core via osmsg's own DuckDB tables."""
 
 import concurrent.futures as cf
 import datetime as dt
@@ -20,11 +18,8 @@ from .pbf_split import split_pbf
 
 BATCH = 1_000_000
 CREATE, MODIFY, DELETE = 0, 1, 2
-# Out-of-core settings for planet-scale aggregation. Leave headroom below physical RAM; spill to disk.
 DUCKDB_MEMORY_LIMIT = "40GB"
 DUCKDB_THREADS = 24
-# A global GROUP BY over all string-keyed tag rows OOMs even with spill, and json_group_object does
-# not spill. Shard raw tags to disk by changeset_id % K, then aggregate each shard independently.
 TAG_SHARDS = 64
 
 ELEM_SCHEMA = pa.schema(
@@ -162,9 +157,7 @@ def stream_changesets(dump: str, start: dt.datetime, end: dt.datetime, work: pat
 
 
 def build_tables(con: duckdb.DuckDBPyConnection, work: pathlib.Path) -> None:
-    """Populate osmsg's tables (users, changesets, changeset_stats) from the streamed raw rows. Globs
-    raw_elements_*/raw_tags_* so single-process and split-parallel runs both work: one global GROUP BY
-    recombines each changeset's edits across parts."""
+    """Populate osmsg's tables (users, changesets, changeset_stats) from the streamed raw rows."""
     con.execute("INSTALL json; LOAD json;")
     work = pathlib.Path(work)
     cs = (work / "raw_changesets.parquet").as_posix()
@@ -209,8 +202,6 @@ def build_tables(con: duckdb.DuckDBPyConnection, work: pathlib.Path) -> None:
               a.rels_created, a.rels_modified, a.rels_deleted,
               a.poi_created, a.poi_modified"""
     for b in range(TAG_SHARDS):
-        # Insert this shard's agg changesets; attach tag_stats only if the shard has tags (tiny inputs
-        # and edit-only changesets carry none).
         shard_dir = shards / f"shard={b}"
         if shard_dir.is_dir():
             shard_glob = (shard_dir / "*.parquet").as_posix()
@@ -244,11 +235,8 @@ def build_tables(con: duckdb.DuckDBPyConnection, work: pathlib.Path) -> None:
 
 
 def export_parquet(con: duckdb.DuckDBPyConnection, out: pathlib.Path) -> None:
-    """Materialise the two datasets as persisted tables (a view would re-run the planet-scale joins per
-    partition; a TEMP table would hold 180M JSON rows in RAM), then write Morton-sorted partitions."""
+    """Materialise the two datasets as persisted tables, then write Morton-sorted partitions."""
     con.execute(MORTON_MACROS)
-    # changefiles created_at falls back to the element edit time when the changeset predates the window,
-    # so in-window edits are never dropped.
     con.execute(
         f"""CREATE TABLE changefiles_all AS
             SELECT s.* EXCLUDE (seq_id),
@@ -292,9 +280,8 @@ def aggregate(work: pathlib.Path, out: pathlib.Path) -> pathlib.Path:
 def convert(
     osh: str, changesets: str, start: dt.datetime, end: dt.datetime, work_dir: pathlib.Path, parts: int = 1
 ) -> pathlib.Path:
-    """Convert one .osh history + changeset dump to the two parquet datasets under `work_dir/out`.
-    With parts>1 the history is split at blob boundaries and streamed concurrently. Returns the out
-    directory holding changefiles/, changesets/, and stats.duckdb."""
+    """Convert one .osh history + changeset dump to the two parquet datasets under `work_dir/out`,
+    returned as a path. With parts>1 the history is split and streamed concurrently."""
     work = pathlib.Path(work_dir)
     raw = work / "raw"
     raw.mkdir(parents=True, exist_ok=True)

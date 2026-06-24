@@ -24,8 +24,6 @@ def conn():
 
 @pytest.fixture(autouse=True)
 def stub_seed(monkeypatch):
-    # Real timestamp->sequence needs the network; stub it but still write a state row so the handoff's
-    # effect on the state table is observable.
     def fake_seed(c, resume_at, url):
         upsert_state(c, source_url=url, last_seq=42, last_ts=resume_at, updated_at=NOW)
         return resume_at
@@ -44,7 +42,7 @@ def _cfg(urls, explicit):
 def test_fresh_store_left_untouched(conn):
     cfg = _cfg([SHORTCUTS["minute"]], False)
     _select_update_source(conn, cfg, NOW)
-    assert cfg.urls == [SHORTCUTS["minute"]]  # bootstrap path handles it downstream
+    assert cfg.urls == [SHORTCUTS["minute"]]
 
 
 def test_auto_continues_current_when_fresh_enough(conn):
@@ -57,14 +55,13 @@ def test_auto_continues_current_when_fresh_enough(conn):
 
 def test_auto_refines_day_to_hour(conn):
     _track(conn, SHORTCUTS["day"], NOW - dt.timedelta(days=1))
-    cfg = _cfg([SHORTCUTS["minute"]], False)  # default urls, not explicit
+    cfg = _cfg([SHORTCUTS["minute"]], False)
     _select_update_source(conn, cfg, NOW)
-    assert cfg.urls == [SHORTCUTS["hour"]]  # 1-day gap -> hour
-    assert _tracked_sources(conn) == [SHORTCUTS["hour"]]  # day retired, single source
+    assert cfg.urls == [SHORTCUTS["hour"]]
+    assert _tracked_sources(conn) == [SHORTCUTS["hour"]]
 
 
 def test_auto_never_coarsens(conn):
-    # a minute store gone stale a week stays on minute (coarsening could skip the partial period)
     _track(conn, SHORTCUTS["minute"], NOW - dt.timedelta(days=7))
     cfg = _cfg([SHORTCUTS["minute"]], False)
     _select_update_source(conn, cfg, NOW)
@@ -78,6 +75,5 @@ def test_explicit_switch_day_to_minute_hands_off(conn):
     cfg = _cfg([SHORTCUTS["minute"]], True)
     _select_update_source(conn, cfg, NOW)
     assert cfg.urls == [SHORTCUTS["minute"]]
-    assert _tracked_sources(conn) == [SHORTCUTS["minute"]]  # day retired
-    # minute was seeded at the day boundary (clean, disjoint handoff)
+    assert _tracked_sources(conn) == [SHORTCUTS["minute"]]
     assert get_state(conn, SHORTCUTS["minute"])["last_ts"] == boundary

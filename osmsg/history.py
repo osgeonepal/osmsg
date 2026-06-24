@@ -10,26 +10,26 @@ from dataclasses import dataclass
 import duckdb
 import requests
 
-from .ui import info, warn
+from .ui import info, progress_bar, warn
 
 UTC = dt.UTC
 SCHEMA_VERSION = 1
 DEFAULT_HISTORY_URL = "hf://datasets/kshitijrajsharma/osmsg-history"
-HISTORY_SEQ_ID = 0  # sentinel seq_id for rows sourced from the history backfill (no replication seq)
+HISTORY_SEQ_ID = 0
 
 
 @dataclass
 class Manifest:
     schema_version: int
-    min_month: dt.datetime  # first day of the earliest covered month (UTC)
-    frontier: dt.datetime  # first day of the month AFTER the latest covered month (exclusive bound)
+    min_month: dt.datetime
+    frontier: dt.datetime
 
 
 @dataclass
 class WindowSplit:
     remote_start: dt.datetime | None
-    remote_end: dt.datetime | None  # exclusive
-    live_start: dt.datetime  # the live diff path handles [live_start, end]
+    remote_end: dt.datetime | None
+    live_start: dt.datetime
 
     @property
     def has_remote(self) -> bool:
@@ -51,7 +51,6 @@ class RemoteFilters:
 
 
 def _manifest_http_url(history_url: str) -> str:
-    # hf://datasets/<repo> -> https://huggingface.co/datasets/<repo>/resolve/main/manifest.json
     if history_url.startswith("hf://datasets/"):
         repo = history_url[len("hf://datasets/") :]
         return f"https://huggingface.co/datasets/{repo}/resolve/main/manifest.json"
@@ -78,7 +77,7 @@ def fetch_manifest(history_url: str, timeout: int = 15) -> Manifest | None:
                 return None
             payload = response.json()
         else:
-            with open(url) as handle:  # local path (testing / self-hosted mirror)
+            with open(url) as handle:
                 payload = json.load(handle)
     except (requests.RequestException, OSError, ValueError) as exc:
         warn(f"history: manifest unreachable ({type(exc).__name__}); using live path.")
@@ -124,9 +123,8 @@ def _months(start: dt.datetime, end: dt.datetime) -> list[tuple[int, int]]:
 
 
 def _partition_list(base: str, dataset: str, months: list[tuple[int, int]]) -> str | None:
-    """Direct read_parquet() over the dataset's month partitions, or None when none exist. A glob would
-    make DuckDB list every partition over the HF API. Local bases are filtered to files that exist,
-    since a converted slice may lack a partition (e.g. a month with metadata but no counted edits)."""
+    """Direct read_parquet() over the given month partitions (local bases filtered to existing files),
+    or None when none exist."""
     root = base.rstrip("/")
     remote = root.startswith(("hf://", "http://", "https://", "s3://"))
     files = [f"{root}/{dataset}/year={year}/month={month}/data.parquet" for (year, month) in months]
@@ -138,9 +136,7 @@ def _partition_list(base: str, dataset: str, months: list[tuple[int, int]]) -> s
 
 
 def _hashtag_predicate(hashtags: list[str], exact_lookup: bool) -> str:
-    """SQL predicate over the changesets `hashtags` list, matching the live ChangesetHandler.
-    Whole-token (case-insensitive) with exact_lookup, otherwise substring. hashtags are already
-    canonicalised to a leading '#'."""
+    """SQL predicate matching the changesets `hashtags` list: whole-token with exact_lookup, else substring."""
     needles = [h.lower() for h in hashtags]
     if exact_lookup:
         terms = ", ".join(f"'{n}'" for n in needles)
@@ -160,10 +156,6 @@ def ingest_remote(
     if split.remote_start is None or split.remote_end is None:
         return 0
     months = _months(split.remote_start, split.remote_end)
-    changesets_src = _partition_list(history_url, "changesets", months)
-    changefiles_src = _partition_list(history_url, "changefiles", months)
-    if changesets_src is None and changefiles_src is None:
-        return 0
     start_iso = split.remote_start.astimezone(UTC).isoformat()
     end_iso = split.remote_end.astimezone(UTC).isoformat()
     in_window = f"created_at >= TIMESTAMPTZ '{start_iso}' AND created_at < TIMESTAMPTZ '{end_iso}'"
@@ -172,20 +164,7 @@ def ingest_remote(
     conn.execute("INSTALL spatial; LOAD spatial;")
     if history_url.startswith(("hf://", "http://", "https://", "s3://")):
         conn.execute("INSTALL httpfs; LOAD httpfs;")
-        # Ride out HF rate-limits on multi-partition reads instead of failing the run.
         conn.execute("SET http_retries=10; SET http_retry_wait_ms=2000; SET http_retry_backoff=1.5;")
-
-    info(f"history: remote ingest {start_iso} -> {end_iso} ({len(months)} month partitions) from {history_url}")
-
-    if changesets_src is not None:
-        # Names for everyone in the window; every changeset_stats uid has a changeset row here.
-        conn.execute(
-            f"""INSERT INTO users
-                SELECT uid, any_value(username) FROM {changesets_src}
-                WHERE {in_window} AND username IS NOT NULL
-                GROUP BY uid
-                ON CONFLICT (uid) DO NOTHING"""
-        )
 
     changeset_preds = [in_window]
     if filters.hashtags:
@@ -199,51 +178,55 @@ def ingest_remote(
         changeset_preds.append(f"uid IN (SELECT uid FROM users WHERE username IN ({names}))")
     changeset_where = " AND ".join(changeset_preds)
 
-    # Always populate changesets: every changeset_stats row needs a parent row (the live path keeps
-    # this invariant via stubs, and Postgres enforces it as a foreign key). A metadata filter narrows
-    # which changesets (and thus which stats) are kept; a plain run keeps all in the window.
-    if changesets_src is not None:
-        conn.execute(
-            f"""INSERT INTO changesets
-                SELECT changeset_id, uid, created_at, hashtags, editor,
-                       CASE WHEN min_lon IS NOT NULL
-                            THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat) END
-                FROM {changesets_src} WHERE {changeset_where}
-                ON CONFLICT (changeset_id) DO NOTHING"""
-        )
-
     stats_preds = [in_window]
     if filters.has_metadata_filter:
-        # Keep element stats only for changesets that passed the metadata filter above.
         stats_preds.append("changeset_id IN (SELECT changeset_id FROM changesets)")
     stats_where = " AND ".join(stats_preds)
 
-    if changefiles_src is not None:
-        conn.execute(
-            f"""INSERT INTO changeset_stats
-                SELECT changeset_id, {HISTORY_SEQ_ID} AS seq_id, uid,
-                       nodes_created, nodes_modified, nodes_deleted,
-                       ways_created, ways_modified, ways_deleted,
-                       rels_created, rels_modified, rels_deleted,
-                       poi_created, poi_modified, tag_stats
-                FROM {changefiles_src} WHERE {stats_where}
-                ON CONFLICT (seq_id, changeset_id) DO NOTHING"""
-        )
+    info(f"history: remote ingest {start_iso} -> {end_iso} ({len(months)} month partitions) from {history_url}")
+
+    with progress_bar(len(months), unit="months", description="Reading history") as advance:
+        for month in months:
+            changesets_src = _partition_list(history_url, "changesets", [month])
+            changefiles_src = _partition_list(history_url, "changefiles", [month])
+            if changesets_src is not None:
+                conn.execute(
+                    f"""INSERT INTO users
+                        SELECT uid, any_value(username) FROM {changesets_src}
+                        WHERE {in_window} AND username IS NOT NULL
+                        GROUP BY uid ON CONFLICT (uid) DO NOTHING"""
+                )
+                conn.execute(
+                    f"""INSERT INTO changesets
+                        SELECT changeset_id, uid, created_at, hashtags, editor,
+                               CASE WHEN min_lon IS NOT NULL
+                                    THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat) END
+                        FROM {changesets_src} WHERE {changeset_where}
+                        ON CONFLICT (changeset_id) DO NOTHING"""
+                )
+            if changefiles_src is not None:
+                conn.execute(
+                    f"""INSERT INTO changeset_stats
+                        SELECT changeset_id, {HISTORY_SEQ_ID} AS seq_id, uid,
+                               nodes_created, nodes_modified, nodes_deleted,
+                               ways_created, ways_modified, ways_deleted,
+                               rels_created, rels_modified, rels_deleted,
+                               poi_created, poi_modified, tag_stats
+                        FROM {changefiles_src} WHERE {stats_where}
+                        ON CONFLICT (seq_id, changeset_id) DO NOTHING"""
+                )
+            advance()
+
     row = conn.execute(f"SELECT count(*) FROM changeset_stats WHERE seq_id = {HISTORY_SEQ_ID}").fetchone()
     return row[0] if row else 0
 
 
-# Resume one day before the frontier, not at it. A changeset can stay open for up to 24h, so its
-# edits can straddle the frontier, and converting a date to a replication sequence is not exact. The
-# re-scanned day overlaps the history layer, which the seq_id=0 dedup removes, so this never misses an
-# edit and never double counts.
 RESUME_SAFETY = dt.timedelta(days=1)
 
 
 def seed_resume_at(conn: duckdb.DuckDBPyConnection, resume_at: dt.datetime, replication_url: str) -> dt.datetime | None:
-    """Seed the `state` table so `osmsg --update` resumes at `resume_at` on `replication_url`. Derives
-    the replication sequence from the timestamp, so the caller never picks a seq by hand. Returns the
-    resume timestamp, or None if no sequence resolves at that time."""
+    """Seed `state` so `osmsg --update` resumes at `resume_at` on `replication_url`. Returns resume_at,
+    or None if no sequence resolves."""
     from osmium.replication.server import ReplicationServer
 
     from .db.schema import upsert_state

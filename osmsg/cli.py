@@ -271,6 +271,14 @@ def main(
         str | None,
         typer.Option("--changeset-file", help="Changeset dump (.osm.bz2) paired with --osh-file."),
     ] = None,
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite",
+            help="Recompute even if <name>.duckdb already holds this exact query; otherwise a rerun "
+            "that only changes the output format re-exports from the existing store.",
+        ),
+    ] = False,
 ) -> None:
     """Run osmsg. With no subcommand this generates stats (or loads history with --insert)."""
     if ctx.invoked_subcommand is not None:
@@ -338,6 +346,7 @@ def main(
         insert=insert,
         osh_file=osh_file,
         changeset_file=changeset_file,
+        overwrite=overwrite,
     )
 
     if last is not None:

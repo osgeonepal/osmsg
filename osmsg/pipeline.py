@@ -5,6 +5,8 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import datetime as dt
+import hashlib
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -95,6 +97,7 @@ class RunConfig:
     insert: bool = False
     osh_file: str | None = None
     changeset_file: str | None = None
+    overwrite: bool = False
 
 
 def _resolve_country_urls(countries: list[str]) -> list[str]:
@@ -232,9 +235,6 @@ def _seed_history_resume(conn, cfg: RunConfig) -> None:
             seed_resume_state(conn, cfg.history_url, url)
 
 
-# minute < hour < day. Day diffs land at 00:00 UTC, which is also an hour and minute boundary, so
-# resuming a finer source at a coarser source's last_ts is disjoint (no edit double-counted or
-# skipped). The reverse can skip the partial current period, so --update only ever auto-refines.
 _GRANULARITY_RANK = {SHORTCUTS["minute"]: 0, SHORTCUTS["hour"]: 1, SHORTCUTS["day"]: 2}
 
 
@@ -244,9 +244,7 @@ def _tracked_sources(conn) -> list[str]:
 
 
 def _switch_source(conn, from_url: str, to_url: str) -> None:
-    """Hand tracking from from_url to to_url at from_url's last_ts (a clean seq boundary) and retire
-    from_url, so the two sequence spaces never overlap (double count) or gap. Each granularity is a
-    separate sequence, so the disjoint-coverage invariant is what keeps stats correct across a switch."""
+    """Resume to_url at from_url's last_ts and retire from_url, so the granularities never overlap or gap."""
     state = get_state(conn, from_url)
     if state is None:
         return
@@ -258,12 +256,11 @@ def _switch_source(conn, from_url: str, to_url: str) -> None:
 
 
 def _select_update_source(conn, cfg: RunConfig, now: dt.datetime) -> None:
-    """Pick the source `--update` continues. Without `--url`, continue the tracked source and auto-refine
-    to a finer granularity as the backlog shrinks; with `--url`, switch to it. Switches are clean
-    handoffs and a store tracks one planet source at a time, so granularities never overlap."""
+    """Pick the source `--update` continues: without `--url`, continue the tracked source and auto-refine
+    to a finer granularity as the backlog shrinks; with `--url`, switch to it via a clean handoff."""
     tracked = _tracked_sources(conn)
     if not tracked:
-        return  # fresh store: _resolve_url_starts bootstraps cfg.urls as given
+        return
     if len(tracked) > 1:
         if not cfg.url_explicit:
             cfg.urls = tracked
@@ -286,9 +283,8 @@ def _select_update_source(conn, cfg: RunConfig, now: dt.datetime) -> None:
 
 
 def _history_live_start(split: WindowSplit, frontier: dt.datetime) -> dt.datetime:
-    """Where the live tail begins after a remote ingest. When the query reached the published frontier,
-    back up by the safety window: the dataset's final month can stop short of its nominal boundary, so
-    re-scanning lets the seq_id=0 dedup recover the shortfall (the overlap it did cover is dropped)."""
+    """Where the live tail begins after a remote ingest: back up by the safety window when the query
+    reached the frontier (the final month may be short), else the split boundary."""
     if split.remote_end == frontier:
         return frontier - RESUME_SAFETY
     return split.live_start
@@ -351,8 +347,6 @@ def _run_insert(cfg: RunConfig, conn: duckdb.DuckDBPyConnection, db_path: Path) 
     if cfg.url_explicit:
         seed_urls = cfg.urls
     else:
-        # The catch-up gap (now - frontier) is usually weeks; seed the granularity --update can clear
-        # quickly instead of crawling minute diffs. --update continues this same source.
         seed_urls = [resolve_url(_pick_replication_for_span(dt.datetime.now(UTC) - split.remote_end))]
     for url in seed_urls:
         seed_resume_at(conn, resume_at, url)
@@ -365,6 +359,136 @@ def _run_insert(cfg: RunConfig, conn: duckdb.DuckDBPyConnection, db_path: Path) 
         written["psql"] = cfg.psql_dsn
     dbmod.close(conn)
     return {"rows": n, "files": written, "rows_data": [], "summary": None, "start_seq": None, "end_seq": None}
+
+
+def _query_fingerprint(cfg: RunConfig) -> str:
+    """Stable hash of the query's data-affecting params, excluding output formats."""
+    key = {
+        "start": cfg.start_date.isoformat() if cfg.start_date else None,
+        "end": cfg.end_date.isoformat() if cfg.end_date else None,
+        "urls": sorted(cfg.urls),
+        "countries": sorted(cfg.countries) if cfg.countries else None,
+        "boundary": cfg.boundary,
+        "hashtags": sorted(cfg.hashtags) if cfg.hashtags else None,
+        "exact_lookup": cfg.exact_lookup,
+        "users": sorted(cfg.users_filter) if cfg.users_filter else None,
+        "tag_mode": cfg.tag_mode,
+        "additional_tags": sorted(cfg.additional_tags) if cfg.additional_tags else None,
+        "length_tags": sorted(cfg.length_tags) if cfg.length_tags else None,
+        "changeset": cfg.changeset,
+        "summary": cfg.summary,
+        "tm_stats": cfg.tm_stats,
+        "history_mode": cfg.history_mode,
+    }
+    return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()
+
+
+def _read_fingerprint(conn: duckdb.DuckDBPyConnection) -> str | None:
+    """The query fingerprint stamped on an existing store, or None if absent."""
+    present = conn.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'osmsg_run_meta'").fetchone()
+    if not present:
+        return None
+    row = conn.execute("SELECT fingerprint FROM osmsg_run_meta LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
+def _store_fingerprint(conn: duckdb.DuckDBPyConnection, fingerprint: str) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS osmsg_run_meta (fingerprint VARCHAR)")
+    conn.execute("DELETE FROM osmsg_run_meta")
+    conn.execute("INSERT INTO osmsg_run_meta VALUES (?)", [fingerprint])
+
+
+def _finalize(
+    cfg: RunConfig,
+    conn: duckdb.DuckDBPyConnection,
+    fingerprint: str,
+    *,
+    start_date_utc: dt.datetime,
+    end_date_utc: dt.datetime,
+    start_seq: int | None,
+    end_seq: int | None,
+) -> dict[str, Any]:
+    """Aggregate the populated tables into user stats and write the requested formats."""
+    rows = user_stats(conn, top_n=None)
+    if not rows:
+        dbmod.close(conn)
+        # Raised so the CLI can map "no new data" to exit 0.
+        raise NoDataFoundError("No stats produced for the requested time range.")
+    _store_fingerprint(conn, fingerprint)
+
+    if cfg.changeset or cfg.hashtags:
+        attach_metadata(conn, rows)
+    if cfg.additional_tags or cfg.tag_mode != "none" or cfg.length_tags:
+        attach_tag_stats(
+            conn,
+            rows,
+            additional_tags=cfg.additional_tags,
+            tag_mode=cfg.tag_mode,
+            length_tags=cfg.length_tags,
+        )
+    if cfg.tm_stats:
+        rows = tm.enrich(rows)
+
+    out = cfg.output_dir
+    written: dict[str, str] = {}
+    if "parquet" in cfg.formats:
+        written["parquet"] = str(to_parquet(rows, out / f"{cfg.name}.parquet"))
+    if "csv" in cfg.formats:
+        written["csv"] = str(to_csv(rows, out / f"{cfg.name}.csv"))
+    if "json" in cfg.formats:
+        written["json"] = str(to_json(rows, out / f"{cfg.name}.json"))
+    if "markdown" in cfg.formats:
+        md_path = out / f"{cfg.name}.md"
+        table_markdown(rows, output_path=md_path)
+        written["markdown"] = str(md_path)
+
+    summary_rows: list[dict[str, Any]] | None = None
+    if cfg.summary:
+        summary_rows = daily_summary(
+            conn,
+            additional_tags=cfg.additional_tags,
+            tag_mode=cfg.tag_mode,
+            length_tags=cfg.length_tags,
+        )
+    if summary_rows:
+        if "parquet" in cfg.formats:
+            written["summary_parquet"] = str(to_parquet(summary_rows, out / f"{cfg.name}_summary.parquet"))
+        if "csv" in cfg.formats:
+            written["summary_csv"] = str(to_csv(summary_rows, out / f"{cfg.name}_summary.csv"))
+        if "json" in cfg.formats:
+            written["summary_json"] = str(to_json(summary_rows, out / f"{cfg.name}_summary.json"))
+        if "markdown" in cfg.formats:
+            summary_md_path = out / f"{cfg.name}_summary.md"
+            summary_markdown(
+                rows,
+                output_path=summary_md_path,
+                start_date=start_date_utc,
+                end_date=end_date_utc,
+                additional_tags=cfg.additional_tags,
+                length_tags=cfg.length_tags,
+                tag_mode=cfg.tag_mode,
+                fname=cfg.name,
+                tm_stats=cfg.tm_stats,
+            )
+            written["summary_md"] = str(summary_md_path)
+        # psql: skipped on purpose, daily_summary is a query over the four base tables.
+
+    if "psql" in cfg.formats:
+        if not cfg.psql_dsn:
+            raise OsmsgError("'psql' format requires a libpq DSN (--psql-dsn / RunConfig.psql_dsn=...).")
+        info(f"Pushing to PostgreSQL: {cfg.psql_dsn.split()[0]}…")
+        to_psql(conn, cfg.psql_dsn, bulk_load=cfg.psql_bulk)
+        written["psql"] = cfg.psql_dsn
+
+    dbmod.close(conn)
+    return {
+        "rows": len(rows),
+        "files": written,
+        "rows_data": rows,
+        "summary": summary_rows,
+        "start_seq": start_seq,
+        "end_seq": end_seq,
+    }
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
@@ -482,14 +606,32 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     cookie = _ensure_credentials(cfg)
 
     db_path = cfg.output_dir / f"{cfg.name}.duckdb"
+
+    if cfg.end_date is None:
+        cfg.end_date = dt.datetime.now(UTC)
+    fingerprint = _query_fingerprint(cfg)
+
+    if not cfg.update and not cfg.insert and not cfg.overwrite and db_path.exists():
+        existing = dbmod.connect(str(db_path))
+        if _read_fingerprint(existing) == fingerprint:
+            info(f"Reusing {db_path} (same query); re-exporting. Pass --overwrite to recompute.")
+            start_utc = (cfg.start_date or cfg.end_date).astimezone(UTC)
+            return _finalize(
+                cfg,
+                existing,
+                fingerprint,
+                start_date_utc=start_utc,
+                end_date_utc=cfg.end_date.astimezone(UTC),
+                start_seq=None,
+                end_seq=None,
+            )
+        dbmod.close(existing)
+
     if not cfg.update and db_path.exists():
         db_path.unlink()
     conn = dbmod.connect(str(db_path))
     dbmod.create_tables(conn)
     info(f"DuckDB: {db_path}")
-
-    if cfg.end_date is None:
-        cfg.end_date = dt.datetime.now(UTC)
 
     if cfg.insert:
         return _run_insert(cfg, conn, db_path)
@@ -533,8 +675,6 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     if (cfg.tm_stats or cfg.summary or cfg.tag_mode == "all") and not cfg.changeset and not cfg.hashtags:
         cfg.changeset = True
 
-    # Hybrid-auto history: serve the covered months from the published parquet, leaving only the
-    # uncovered recent tail to the live diff path. Falls back to full live on any problem.
     run_live = True
     if cfg.history_mode == "auto" and not cfg.update:
         if cfg.length_tags:
@@ -562,7 +702,6 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                             _auto_switch_replication(cfg, cfg.end_date - cfg.start_date)
                     except duckdb.Error as exc:
                         warn(f"history: remote ingest failed ({type(exc).__name__}: {exc}); using live path.")
-                        # Discard any partial remote rows so the live path is the sole source.
                         for tbl in ("changeset_stats", "changesets", "users"):
                             conn.execute(f"DELETE FROM {tbl}")
                         run_live = True
@@ -700,9 +839,6 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             if sub.exists():
                 shutil.rmtree(sub, ignore_errors=True)
 
-    # History rows (seq_id=0) hold a changeset's COMPLETE lifetime counts. If the live tail re-saw
-    # some of those edits for a changeset that straddles the frontier, drop the live duplicates: the
-    # history row already counts them, so this is no-loss and prevents double counting.
     history_row = conn.execute("SELECT count(*) FROM changeset_stats WHERE seq_id = 0").fetchone()
     has_history = bool(history_row and history_row[0] > 0)
     if run_live and has_history:
@@ -720,90 +856,15 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     else:
         start_date_utc = cfg.start_date.astimezone(UTC)
 
-    rows = user_stats(conn, top_n=None)
-    if not rows:
-        dbmod.close(conn)
-        # Raised so the CLI can map "no new data" to exit 0.
-        raise NoDataFoundError("No stats produced for the requested time range.")
-
-    if cfg.changeset or cfg.hashtags:
-        attach_metadata(conn, rows)
-    if cfg.additional_tags or cfg.tag_mode != "none" or cfg.length_tags:
-        attach_tag_stats(
-            conn,
-            rows,
-            additional_tags=cfg.additional_tags,
-            tag_mode=cfg.tag_mode,
-            length_tags=cfg.length_tags,
-        )
-
-    if cfg.tm_stats:
-        rows = tm.enrich(rows)
-
-    out = cfg.output_dir
-    written: dict[str, str] = {}
-    if "parquet" in cfg.formats:
-        written["parquet"] = str(to_parquet(rows, out / f"{cfg.name}.parquet"))
-    if "csv" in cfg.formats:
-        written["csv"] = str(to_csv(rows, out / f"{cfg.name}.csv"))
-    if "json" in cfg.formats:
-        written["json"] = str(to_json(rows, out / f"{cfg.name}.json"))
-
-    if "markdown" in cfg.formats:
-        md_path = out / f"{cfg.name}.md"
-        table_markdown(
-            rows,
-            output_path=md_path,
-        )
-        written["markdown"] = str(md_path)
-
-    summary_rows: list[dict[str, Any]] | None = None
-    if cfg.summary:
-        summary_rows = daily_summary(
-            conn,
-            additional_tags=cfg.additional_tags,
-            tag_mode=cfg.tag_mode,
-            length_tags=cfg.length_tags,
-        )
-    if summary_rows:
-        if "parquet" in cfg.formats:
-            written["summary_parquet"] = str(to_parquet(summary_rows, out / f"{cfg.name}_summary.parquet"))
-        if "csv" in cfg.formats:
-            written["summary_csv"] = str(to_csv(summary_rows, out / f"{cfg.name}_summary.csv"))
-        if "json" in cfg.formats:
-            written["summary_json"] = str(to_json(summary_rows, out / f"{cfg.name}_summary.json"))
-        if "markdown" in cfg.formats:
-            summary_md_path = out / f"{cfg.name}_summary.md"
-            summary_markdown(
-                rows,
-                output_path=summary_md_path,
-                start_date=start_date_utc,
-                end_date=end_date_utc,
-                additional_tags=cfg.additional_tags,
-                length_tags=cfg.length_tags,
-                tag_mode=cfg.tag_mode,
-                fname=cfg.name,
-                tm_stats=cfg.tm_stats,
-            )
-            written["summary_md"] = str(summary_md_path)
-        # psql: skipped on purpose, daily_summary is a query over the four base tables.
-
-    if "psql" in cfg.formats:
-        if not cfg.psql_dsn:
-            raise OsmsgError("'psql' format requires a libpq DSN (--psql-dsn / RunConfig.psql_dsn=...).")
-        info(f"Pushing to PostgreSQL: {cfg.psql_dsn.split()[0]}…")
-        to_psql(conn, cfg.psql_dsn, bulk_load=cfg.psql_bulk)
-        written["psql"] = cfg.psql_dsn
-
-    dbmod.close(conn)
-    return {
-        "rows": len(rows),
-        "files": written,
-        "rows_data": rows,
-        "summary": summary_rows,
-        "start_seq": start_seq,
-        "end_seq": end_seq,
-    }
+    return _finalize(
+        cfg,
+        conn,
+        fingerprint,
+        start_date_utc=start_date_utc,
+        end_date_utc=end_date_utc,
+        start_seq=start_seq,
+        end_seq=end_seq,
+    )
 
 
 __all__ = ["RunConfig", "run"]

@@ -116,17 +116,17 @@ def test_convert_attribution_tags_window(tmp_path):
         ).fetchall()
     }
     assert set(cf) == {100, 200, 300}
-    assert cf[100][1] == 1 and cf[100][4] == 1  # node create + way create
-    assert cf[200][2] == 1  # node modify
-    assert cf[300][3] == 1  # node delete
-    assert cf[100][5] == 1  # poi_created: tagged node created
-    assert abs(cf[100][7] - 13.1) < 1e-6  # centroid lon from bbox
+    assert cf[100][1] == 1 and cf[100][4] == 1
+    assert cf[200][2] == 1
+    assert cf[300][3] == 1
+    assert cf[100][5] == 1
+    assert abs(cf[100][7] - 13.1) < 1e-6
 
     ts100 = json.loads(cf[100][6])
     assert ts100["building"]["yes"] == {"c": 1, "m": 0}
     assert ts100["highway"]["residential"] == {"c": 1, "m": 0}
     assert json.loads(cf[200][6])["building"]["house"] == {"c": 0, "m": 1}
-    assert cf[300][6] is None  # deleted changeset carries no tags
+    assert cf[300][6] is None
 
     changesets = {
         r[0]: r
@@ -135,7 +135,7 @@ def test_convert_attribution_tags_window(tmp_path):
             f"read_parquet('{out}/changesets/**/*.parquet', hive_partitioning=true)"
         ).fetchall()
     }
-    assert set(changesets) == {100, 200, 300}  # cs50 (2019) excluded by window
+    assert set(changesets) == {100, 200, 300}
     assert changesets[100][2] == "JOSM" and changesets[100][3] == ["#hotosm"]
     assert changesets[300][2] is None
 

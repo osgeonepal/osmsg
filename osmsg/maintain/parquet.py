@@ -6,8 +6,6 @@ import duckdb
 
 ROW_GROUP_SIZE = 100_000
 
-# Morton(centroid) as native SQL macros (vectorized): scale lon/lat to 16-bit and interleave the bits
-# so 2D locality maps to a contiguous 1D key. A Python UDF in ORDER BY is ~10x slower at planet scale.
 MORTON_MACROS = """
 CREATE OR REPLACE MACRO _s1(v) AS ((v | (v << 8)) & 16711935);
 CREATE OR REPLACE MACRO _s2(v) AS ((_s1(v) | (_s1(v) << 4)) & 252645135);
@@ -19,7 +17,6 @@ CREATE OR REPLACE MACRO morton2(lon, lat) AS (
 );
 """
 
-# lon/lat centroid plus bbox min/max derived from changesets.geom (osmsg stores the bbox envelope).
 GEOM_COLS = (
     "ST_X(ST_Centroid(c.geom)) AS lon, ST_Y(ST_Centroid(c.geom)) AS lat, "
     "ST_XMin(c.geom) AS min_lon, ST_YMin(c.geom) AS min_lat, "
@@ -30,9 +27,8 @@ GEOM_COLS = (
 def write_partitions(
     con: duckdb.DuckDBPyConnection, view: str, base: pathlib.Path, order_by: str = "morton2(lon, lat)"
 ) -> None:
-    """Write one parquet file per year/month partition, each sorted by `order_by`. DuckDB's
-    PARTITION_BY drops the global sort, so each partition is sorted on its own for tight row-group
-    min/max. `view` must expose integer `y`, `m` partition columns."""
+    """Write one parquet file per year/month partition, each sorted by `order_by`. `view` must expose
+    integer `y`, `m` partition columns."""
     base.mkdir(parents=True, exist_ok=True)
     for year, month in con.execute(f"SELECT DISTINCT y, m FROM {view} ORDER BY y, m").fetchall():
         out = base / f"year={year}" / f"month={month}"

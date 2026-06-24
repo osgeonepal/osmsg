@@ -25,13 +25,11 @@ def _db_with_last_changeset(tmp_path, created_at):
 
 
 def test_complete_month_passes(tmp_path):
-    # last changeset a minute before the May boundary -> complete
     db = _db_with_last_changeset(tmp_path, dt.datetime(2026, 5, 31, 23, 59, tzinfo=UTC))
-    verify_month_complete(db, 2026, 5)  # no raise
+    verify_month_complete(db, 2026, 5)
 
 
 def test_truncated_month_raises(tmp_path):
-    # data ends 2h before the boundary (the mid-day snapshot case) -> refuse to publish
     db = _db_with_last_changeset(tmp_path, dt.datetime(2026, 5, 31, 22, 0, tzinfo=UTC))
     with pytest.raises(OsmsgError, match="incomplete"):
         verify_month_complete(db, 2026, 5)

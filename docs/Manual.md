@@ -77,6 +77,10 @@ osmsg --last day -f psql --psql-dsn "host=localhost dbname=osm user=osm"
 > breakdown is just a query over the four base tables, so consumers derive it on demand instead of
 > duplicating data.
 
+`<name>.duckdb` is stamped with the query that built it. Rerunning the same query with a different `-f`
+re-exports from that store instead of refetching, so adding a format is instant. Changing any query
+parameter (window, hashtags, tags, boundary) recomputes; `--overwrite` forces a fresh recompute.
+
 ## Config file
 
 Long invocations are easier to maintain in YAML. Keys mirror the CLI flag names.

@@ -181,6 +181,9 @@ Any flag works as a YAML key. See [docs/Manual.md](./docs/Manual.md) for the ful
 Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus the formats you ask for via
 `-f parquet|csv|json|markdown|psql`. Parquet is the default. Open it with duckdb, polars, pandas, anything.
 
+Rerunning the same query with a different `-f` re-exports from the existing `<name>.duckdb` instead of
+refetching, so adding a format is instant. Pass `--overwrite` to force a fresh recompute.
+
 ## Configuration
 
 Every meaningful flag has a matching `OSMSG_*` env var so the CLI, a `.env` file, and a
@@ -196,6 +199,7 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--cache-dir` | `OSMSG_CACHE_DIR` | platform cache | Where downloaded OSM files are kept across runs. |
 | `--output-dir` | `OSMSG_OUTPUT_DIR` | `.` | Where `<name>.duckdb` and exports are written. |
 | `--format` / `-f` | `OSMSG_FORMAT` | `parquet` | Repeat for multiple. Comma-separated when set via env. |
+| `--overwrite` | (none) | off | Recompute even if `<name>.duckdb` already holds this exact query. |
 | `--psql-dsn` | `OSMSG_PSQL_DSN` | unset | libpq DSN for `-f psql`. |
 | `--psql-bulk` | `OSMSG_PSQL_BULK` | off | Faster first full load to Postgres. |
 | `--history` / `--no-history` | `OSMSG_HISTORY` | on | Read covered months from the published dataset. |

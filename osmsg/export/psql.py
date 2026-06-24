@@ -5,10 +5,6 @@ import duckdb
 from ..exceptions import OsmsgError
 from ..pg_schema import PG_SCHEMA
 
-# Secondary indexes and foreign keys that make a row-by-row insert slow. For a one-time bulk load
-# they are dropped before the COPY and rebuilt once after (one index build + one FK validation,
-# instead of maintaining them per row). Primary keys stay, because the ON CONFLICT upserts need them.
-# Indexes are (name, create-sql); foreign keys are (table, name, add-clause).
 _BULK_INDEXES = [
     ("idx_changesets_created_at", "CREATE INDEX idx_changesets_created_at ON changesets (created_at)"),
     ("idx_changesets_geom", "CREATE INDEX idx_changesets_geom ON changesets USING GIST (geom)"),
@@ -25,8 +21,6 @@ _BULK_FKS = [
 ]
 
 
-# Bulk loads push the big tables in this many changeset_id ranges, each its own statement and so its
-# own commit, so a failure costs one range instead of rolling back the whole multi-GB load.
 _BULK_COMMIT_CHUNKS = 32
 
 
@@ -102,9 +96,6 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
             )
 
         if bulk_load:
-            # Stream rows instead of buffering them to preserve order; buffering 180M+ JSON-bearing
-            # rows is what exhausts memory in a single INSERT. Then drop the secondary indexes and
-            # foreign keys so the load does not maintain them per row.
             conn.execute("SET preserve_insertion_order = false")
             for table, name, _add in _BULK_FKS:
                 _pg(conn, f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
@@ -114,8 +105,6 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
             _push_chunked(conn, "changesets", _push_changesets)
             _push_chunked(conn, "changeset_stats", _push_changeset_stats)
         elif _pg_has_history(conn):
-            # The history layer (seq_id=0) is already in PG from the bulk load and never changes, so an
-            # incremental --update pushes only the live layer and its parents, not the 180M history rows.
             live_ids = "changeset_id IN (SELECT changeset_id FROM changeset_stats WHERE seq_id <> 0)"
             conn.execute(
                 "INSERT INTO pg_target.users SELECT * FROM users "
@@ -124,7 +113,6 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
             _push_changesets(conn, f"WHERE {live_ids}")
             _push_changeset_stats(conn, "WHERE seq_id <> 0")
         else:
-            # No history in PG (a plain live target): push everything (live rows are all seq_id<>0).
             conn.execute("INSERT INTO pg_target.users SELECT * FROM users ON CONFLICT DO NOTHING")
             _push_changesets(conn)
             _push_changeset_stats(conn)
@@ -141,7 +129,6 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
         )
 
         if bulk_load:
-            # Rebuild once, with more memory for the sort-based index builds, then refresh planner stats.
             for table, name, add in _BULK_FKS:
                 _pg(conn, f"ALTER TABLE {table} ADD CONSTRAINT {name} {add}")
             for _name, create in _BULK_INDEXES:
