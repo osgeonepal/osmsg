@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from platformdirs import user_cache_dir
 from shapely.ops import unary_union
 
@@ -25,6 +26,16 @@ from .exceptions import CredentialsRequiredError, NoDataFoundError, OsmsgError
 from .export import summary_markdown, table_markdown, to_csv, to_json, to_parquet, to_psql
 from .fetch import download_osm_file
 from .geofabrik import country_geometry, country_update_url
+from .history import (
+    RESUME_SAFETY,
+    RemoteFilters,
+    WindowSplit,
+    fetch_manifest,
+    ingest_remote,
+    seed_resume_at,
+    seed_resume_state,
+    split_window,
+)
 from .replication import (
     CHANGESETS_REPLICATION,
     SHORTCUTS,
@@ -77,7 +88,13 @@ class RunConfig:
     osm_username: str | None = None
     osm_password: str | None = None
     psql_dsn: str | None = None
+    psql_bulk: bool = False
     changeset_pad_hours: int = ChangesetReplication.DEFAULT_PAD_HOURS
+    history_mode: str = "auto"  # auto | off
+    history_url: str = "hf://datasets/kshitijrajsharma/osmsg-history"
+    insert: bool = False
+    osh_file: str | None = None
+    changeset_file: str | None = None
 
 
 def _resolve_country_urls(countries: list[str]) -> list[str]:
@@ -199,6 +216,155 @@ def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, tuple[dt.datetime, in
     if cfg.start_date is None:
         raise OsmsgError("start_date is required. Pass --start, --last, --days, or --update with a prior run.")
     return {url: (cfg.start_date, None) for url in cfg.urls}
+
+
+def _seed_history_resume(conn, cfg: RunConfig) -> None:
+    """On --update against a store loaded from the published history but with no resume state yet,
+    seed each source's state at the published frontier so the first update resumes there instead of
+    the default bootstrap window. Makes "load the history, then --update" just work."""
+    if not cfg.update or cfg.history_mode != "auto":
+        return
+    history_rows = conn.execute("SELECT count(*) FROM changeset_stats WHERE seq_id = 0").fetchone()
+    if not history_rows or not history_rows[0]:
+        return
+    for url in cfg.urls:
+        if get_state(conn, url) is None:
+            seed_resume_state(conn, cfg.history_url, url)
+
+
+# minute < hour < day. Day diffs land at 00:00 UTC, which is also an hour and minute boundary, so
+# resuming a finer source at a coarser source's last_ts is disjoint (no edit double-counted or
+# skipped). The reverse can skip the partial current period, so --update only ever auto-refines.
+_GRANULARITY_RANK = {SHORTCUTS["minute"]: 0, SHORTCUTS["hour"]: 1, SHORTCUTS["day"]: 2}
+
+
+def _tracked_sources(conn) -> list[str]:
+    """Planet replication sources this store already tracks (excludes the changeset-metadata stream)."""
+    return [r[0] for r in conn.execute("SELECT source_url FROM state").fetchall() if r[0] != CHANGESETS_REPLICATION]
+
+
+def _switch_source(conn, from_url: str, to_url: str) -> None:
+    """Hand tracking from from_url to to_url at from_url's last_ts (a clean seq boundary) and retire
+    from_url, so the two sequence spaces never overlap (double count) or gap. Each granularity is a
+    separate sequence, so the disjoint-coverage invariant is what keeps stats correct across a switch."""
+    state = get_state(conn, from_url)
+    if state is None:
+        return
+    boundary = state["last_ts"]
+    if seed_resume_at(conn, boundary, to_url) is None:
+        raise OsmsgError(f"cannot switch to {to_url}: no replication sequence resolves at {boundary.isoformat()}.")
+    conn.execute("DELETE FROM state WHERE source_url = ?", [from_url])
+    info(f"--update: handed off {from_url} -> {to_url} at {boundary.isoformat()}.")
+
+
+def _select_update_source(conn, cfg: RunConfig, now: dt.datetime) -> None:
+    """Pick the source `--update` continues. Without `--url`, continue the tracked source and auto-refine
+    to a finer granularity as the backlog shrinks; with `--url`, switch to it. Switches are clean
+    handoffs and a store tracks one planet source at a time, so granularities never overlap."""
+    tracked = _tracked_sources(conn)
+    if not tracked:
+        return  # fresh store: _resolve_url_starts bootstraps cfg.urls as given
+    if len(tracked) > 1:
+        if not cfg.url_explicit:
+            cfg.urls = tracked
+        return
+    current = tracked[0]
+    if cfg.url_explicit:
+        target = cfg.urls[0]
+        if target != current:
+            _switch_source(conn, current, target)
+        cfg.urls = [target]
+        return
+    last = get_state(conn, current)
+    assert last is not None
+    target = resolve_url(_pick_replication_for_span(now - last["last_ts"]))
+    if _GRANULARITY_RANK.get(target, 0) < _GRANULARITY_RANK.get(current, 0):
+        _switch_source(conn, current, target)
+        cfg.urls = [target]
+    else:
+        cfg.urls = [current]
+
+
+def _history_live_start(split: WindowSplit, frontier: dt.datetime) -> dt.datetime:
+    """Where the live tail begins after a remote ingest. When the query reached the published frontier,
+    back up by the safety window: the dataset's final month can stop short of its nominal boundary, so
+    re-scanning lets the seq_id=0 dedup recover the shortfall (the overlap it did cover is dropped)."""
+    if split.remote_end == frontier:
+        return frontier - RESUME_SAFETY
+    return split.live_start
+
+
+def _resolve_geom_wkt(cfg: RunConfig) -> str | None:
+    """The boundary/country filter as WKT, or None when no spatial filter is set."""
+    if cfg.boundary:
+        return load_boundary(cfg.boundary).wkt
+    if cfg.countries:
+        geoms = [country_geometry(region) for region in cfg.countries]
+        return (unary_union(geoms) if len(geoms) > 1 else geoms[0]).wkt
+    return None
+
+
+def _convert_local(cfg: RunConfig) -> tuple[str, WindowSplit]:
+    """Convert the local .osh + changeset dump to parquet under the cache dir and return its base path
+    plus the window split that covers it."""
+    from .maintain.convert import convert
+
+    assert cfg.osh_file is not None and cfg.changeset_file is not None
+    start = cfg.start_date or dt.datetime(2005, 1, 1, tzinfo=UTC)
+    assert cfg.end_date is not None
+    work = cfg.cache_dir / "insert_convert"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    out = convert(cfg.osh_file, cfg.changeset_file, start, cfg.end_date, work)
+    return out.as_posix(), WindowSplit(remote_start=start, remote_end=cfg.end_date, live_start=cfg.end_date)
+
+
+def _run_insert(cfg: RunConfig, conn: duckdb.DuckDBPyConnection, db_path: Path) -> dict[str, Any]:
+    """Populate the store from history (published parquet or a local .osh), seed resume state so a later
+    --update continues, and push to Postgres when a DSN is set. No live diffs, no leaderboard export."""
+    filters = RemoteFilters(
+        hashtags=cfg.hashtags,
+        exact_lookup=cfg.exact_lookup,
+        users_filter=cfg.users_filter,
+        geom_wkt=_resolve_geom_wkt(cfg),
+    )
+    if cfg.osh_file:
+        base, split = _convert_local(cfg)
+    else:
+        manifest = fetch_manifest(cfg.history_url)
+        if manifest is None:
+            raise OsmsgError(
+                "history: dataset manifest unavailable, cannot --insert from the published dataset. "
+                "Pass --osh-file/--changeset-file to insert from local files, or check --history-url."
+            )
+        assert cfg.end_date is not None
+        split = split_window(cfg.start_date or manifest.min_month, cfg.end_date, manifest)
+        base = cfg.history_url
+
+    if not split.has_remote:
+        dbmod.close(conn)
+        raise NoDataFoundError("Insert window has no overlap with the available history.")
+    assert split.remote_end is not None
+
+    n = ingest_remote(conn, split, filters, base)
+    resume_at = split.remote_end - RESUME_SAFETY
+    if cfg.url_explicit:
+        seed_urls = cfg.urls
+    else:
+        # The catch-up gap (now - frontier) is usually weeks; seed the granularity --update can clear
+        # quickly instead of crawling minute diffs. --update continues this same source.
+        seed_urls = [resolve_url(_pick_replication_for_span(dt.datetime.now(UTC) - split.remote_end))]
+    for url in seed_urls:
+        seed_resume_at(conn, resume_at, url)
+    info(f"insert: {n:,} history changeset rows; resume seeded at {resume_at.astimezone(UTC).isoformat()}.")
+
+    written: dict[str, str] = {"duckdb": str(db_path)}
+    if cfg.psql_dsn:
+        info(f"Pushing to PostgreSQL: {cfg.psql_dsn.split()[0]}…")
+        to_psql(conn, cfg.psql_dsn, bulk_load=True)
+        written["psql"] = cfg.psql_dsn
+    dbmod.close(conn)
+    return {"rows": n, "files": written, "rows_data": [], "summary": None, "start_seq": None, "end_seq": None}
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
@@ -324,9 +490,16 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     if cfg.end_date is None:
         cfg.end_date = dt.datetime.now(UTC)
+
+    if cfg.insert:
+        return _run_insert(cfg, conn, db_path)
+
     if cfg.start_date is not None:
         _auto_switch_replication(cfg, cfg.end_date - cfg.start_date)
 
+    if cfg.update:
+        _select_update_source(conn, cfg, dt.datetime.now(UTC))
+    _seed_history_resume(conn, cfg)
     url_starts = _resolve_url_starts(conn, cfg)
     if cfg.update:
         # Changeset-replication reads one planet-wide source; widest window covers every URL.
@@ -339,7 +512,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
     assert cfg.start_date is not None
     if cfg.start_date >= cfg.end_date:
-        raise OsmsgError("start_date >= end_date — nothing to do.")
+        raise OsmsgError("start_date >= end_date, nothing to do.")
 
     span = cfg.end_date - cfg.start_date
     info(f"Range: {cfg.start_date.astimezone(UTC).isoformat()} → {cfg.end_date.astimezone(UTC).isoformat()} ({span})")
@@ -352,18 +525,47 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             f"(~{int(span_hours * 60):,} files). Consider --url hour or --url day."
         )
 
-    geom_wkt = None
-    if cfg.boundary:
-        cfg.changeset = cfg.changeset or not cfg.hashtags
-        geom_wkt = load_boundary(cfg.boundary).wkt
-    elif cfg.countries:
-        geoms = [country_geometry(r) for r in cfg.countries]
-        cfg.changeset = cfg.changeset or not cfg.hashtags
-        geom_wkt = (unary_union(geoms) if len(geoms) > 1 else geoms[0]).wkt
+    geom_wkt = _resolve_geom_wkt(cfg)
+    if (cfg.boundary or cfg.countries) and not cfg.hashtags:
+        cfg.changeset = True
 
-    # summary/tm_stats/--all read the changesets table — populate it even if user didn't ask.
+    # summary/tm_stats/--all read the changesets table, populate it even if user didn't ask.
     if (cfg.tm_stats or cfg.summary or cfg.tag_mode == "all") and not cfg.changeset and not cfg.hashtags:
         cfg.changeset = True
+
+    # Hybrid-auto history: serve the covered months from the published parquet, leaving only the
+    # uncovered recent tail to the live diff path. Falls back to full live on any problem.
+    run_live = True
+    if cfg.history_mode == "auto" and not cfg.update:
+        if cfg.length_tags:
+            warn("history: --length is not in the published dataset; using the live path for the whole range.")
+        else:
+            manifest = fetch_manifest(cfg.history_url)
+            if manifest is not None:
+                split = split_window(cfg.start_date, cfg.end_date, manifest)
+                if split.has_remote:
+                    try:
+                        filters = RemoteFilters(
+                            hashtags=cfg.hashtags,
+                            exact_lookup=cfg.exact_lookup,
+                            users_filter=cfg.users_filter,
+                            geom_wkt=geom_wkt,
+                        )
+                        n = ingest_remote(conn, split, filters, cfg.history_url)
+                        live_start = _history_live_start(split, manifest.frontier)
+                        tail = live_start.astimezone(UTC).isoformat()
+                        info(f"history: ingested {n:,} changeset rows from remote; live tail from {tail}.")
+                        cfg.start_date = live_start
+                        url_starts = {u: (cfg.start_date, None) for u in cfg.urls}
+                        run_live = cfg.start_date < cfg.end_date
+                        if run_live:
+                            _auto_switch_replication(cfg, cfg.end_date - cfg.start_date)
+                    except duckdb.Error as exc:
+                        warn(f"history: remote ingest failed ({type(exc).__name__}: {exc}); using live path.")
+                        # Discard any partial remote rows so the live path is the sole source.
+                        for tbl in ("changeset_stats", "changesets", "users"):
+                            conn.execute(f"DELETE FROM {tbl}")
+                        run_live = True
 
     max_workers = cfg.workers or _cpu_count()
     info(f"Workers: {max_workers}")
@@ -375,7 +577,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     # Threaded into changefile_download_urls so a tick never advances cf past cs.
     cs_frontier_ts: dt.datetime | None = None
 
-    if cfg.hashtags or cfg.changeset:
+    if run_live and (cfg.hashtags or cfg.changeset):
         cs_repl = ChangesetReplication(pad_hours=cfg.changeset_pad_hours)
         cs_state = get_state(conn, CHANGESETS_REPLICATION) if cfg.update else None
         cs_resume_seq = (cs_state["last_seq"] + 1) if cs_state else None
@@ -421,7 +623,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
 
     end_date_utc = cfg.end_date.astimezone(UTC)
 
-    for url in cfg.urls:
+    for url in cfg.urls if run_live else []:
         info(f"Changefiles ← {url}")
         url_start, resume_seq = url_starts[url]
         urls, server_ts, src_start_seq, src_end_seq, _, _ = changefile_download_urls(
@@ -493,10 +695,25 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         info(f"Changefile processing complete: {url}")
 
     if cfg.delete_temp:
-        # Never rmtree cfg.cache_dir itself — it may be the user's platform cache root.
+        # Never rmtree cfg.cache_dir itself, it may be the user's platform cache root.
         for sub in (cs_dir, cf_dir, cfg.cache_dir / "changefiles", cfg.cache_dir / "changeset"):
             if sub.exists():
                 shutil.rmtree(sub, ignore_errors=True)
+
+    # History rows (seq_id=0) hold a changeset's COMPLETE lifetime counts. If the live tail re-saw
+    # some of those edits for a changeset that straddles the frontier, drop the live duplicates: the
+    # history row already counts them, so this is no-loss and prevents double counting.
+    history_row = conn.execute("SELECT count(*) FROM changeset_stats WHERE seq_id = 0").fetchone()
+    has_history = bool(history_row and history_row[0] > 0)
+    if run_live and has_history:
+        dup_row = conn.execute(
+            """DELETE FROM changeset_stats
+               WHERE seq_id <> 0
+                 AND changeset_id IN (SELECT changeset_id FROM changeset_stats WHERE seq_id = 0)"""
+        ).fetchone()
+        n_dupes = dup_row[0] if dup_row else 0
+        if n_dupes:
+            info(f"history: deduped {n_dupes:,} live rows already covered by the history layer.")
 
     if url_starts:
         start_date_utc = min(ts for ts, _seq in url_starts.values()).astimezone(UTC)
@@ -569,13 +786,13 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                 tm_stats=cfg.tm_stats,
             )
             written["summary_md"] = str(summary_md_path)
-        # psql: skipped on purpose — daily_summary is a query over the four base tables.
+        # psql: skipped on purpose, daily_summary is a query over the four base tables.
 
     if "psql" in cfg.formats:
         if not cfg.psql_dsn:
             raise OsmsgError("'psql' format requires a libpq DSN (--psql-dsn / RunConfig.psql_dsn=...).")
         info(f"Pushing to PostgreSQL: {cfg.psql_dsn.split()[0]}…")
-        to_psql(conn, cfg.psql_dsn)
+        to_psql(conn, cfg.psql_dsn, bulk_load=cfg.psql_bulk)
         written["psql"] = cfg.psql_dsn
 
     dbmod.close(conn)

@@ -14,13 +14,15 @@ of nodes, ways, and relations created, modified, or deleted, written to parquet,
 
 A Project of [OSGeo Nepal](https://osgeonepal.org).
 
-## Features
+## What does it do?
 
 - Per-user create/modify/delete counts over any time window.
 - Tag and hashtag breakdowns (e.g. `building`, `#hotosm`).
 - Country and custom-boundary filters via Geofabrik.
 - Cron-friendly resume with `--update`.
+- One-command setup: `osmsg --insert` loads all history into your store, `osmsg --update` keeps it current.
 - Outputs you can query: parquet, csv, json, markdown, DuckDB, Postgres.
+- Cloud-native history: months covered by a published parquet dataset are read remotely.
 
 ## Install
 
@@ -36,6 +38,16 @@ docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last 
 `uvx` can run osmsg in a throwaway environment , no install, no virtualenv to manage. Works
 with any flag combination, e.g. `uvx --from osmsg osmsg --last hour --tags building --summary -f parquet -f markdown`.
 
+More ways to install:
+
+```bash
+conda install -c conda-forge osmsg                 # conda / mamba
+brew install osgeonepal/tap/osmsg          # macOS / Linux (Homebrew tap)
+```
+
+On Windows, download `osmsg.exe` from the [latest release](https://github.com/osgeonepal/osmsg/releases)
+and run it directly, no Python required.
+
 ## Quick start
 
 ```bash
@@ -45,6 +57,38 @@ osmsg --hashtags hotosm --last day       # only changesets tagged #hotosm
 ```
 
 That's it. A `stats.duckdb` and a `stats.parquet` show up in your current folder.
+
+## Set up a full history store
+
+Two commands give you a complete, self-updating store. The first loads all of OSM history from the
+published dataset and records where to resume; the second catches up to now and runs on a schedule.
+
+```bash
+osmsg --insert            # load all history into stats.duckdb, then exit
+osmsg --update            # catch up to now (repeat on cron)
+```
+
+`osmsg` clears the multi-week backlog on day diffs, then refines to finer diffs as the store stays
+current. For near-real-time, run `osmsg --update --url minute`.
+
+Pick your store with one flag. DuckDB is the default (`stats.duckdb`); add a DSN for Postgres:
+
+```bash
+osmsg --insert --psql-dsn "postgresql://user:pass@localhost/osmsg"
+osmsg --update --psql-dsn "postgresql://user:pass@localhost/osmsg"
+```
+
+Load only a slice with `--start/--end`; `--update` then continues from the end of that slice:
+
+```bash
+osmsg --insert --start 2020-01-01 --end 2023-01-01
+```
+
+Already have the planet files? Insert from them directly:
+
+```bash
+osmsg --insert --osh-file history-latest.osh.pbf --changeset-file changesets-latest.osm.bz2
+```
 
 ## Tutorials
 
@@ -153,12 +197,30 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--output-dir` | `OSMSG_OUTPUT_DIR` | `.` | Where `<name>.duckdb` and exports are written. |
 | `--format` / `-f` | `OSMSG_FORMAT` | `parquet` | Repeat for multiple. Comma-separated when set via env. |
 | `--psql-dsn` | `OSMSG_PSQL_DSN` | unset | libpq DSN for `-f psql`. |
+| `--psql-bulk` | `OSMSG_PSQL_BULK` | off | Faster first full load to Postgres. |
+| `--history` / `--no-history` | `OSMSG_HISTORY` | on | Read covered months from the published dataset. |
+| `--history-url` | `OSMSG_HISTORY_URL` | `osmsg-history` | Published dataset location. |
+| `--insert` | (none) | off | Load history into the store and seed resume, then exit. No window loads all of it. |
+| `--osh-file` / `--changeset-file` | (none) | unset | Insert from local planet history + changeset files instead of the dataset. |
 | `--changeset-pad-hours` | `OSMSG_CHANGESET_PAD_HOURS` | `1` | See below. |
 | (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP` | `hour` | `hour`, `day`, or `week`. Used when `--update` runs against an empty DB. |
 | (auto-bootstrap on `--update`) | `OSMSG_BOOTSTRAP_DAYS` | unset | Integer N; overrides `OSMSG_BOOTSTRAP`. |
 | OSM credentials (Geofabrik) | `OSM_USERNAME`, `OSM_PASSWORD` | unset | Required only when a Geofabrik URL is in use. |
 
 A `.env` file at the working directory is loaded automatically.
+
+## Maintainers
+
+Generating and publishing the history dataset is the `osmsg maintain` group:
+
+```bash
+osmsg maintain month 2026-06 --repo osgeonepal/osmsg-history   # append one finished month
+osmsg maintain month 2026-06 --no-upload                       # generate locally, review, upload later
+osmsg maintain convert history.osh.pbf changesets.osm.bz2 2005-01-01 2026-06-01 work --parts 24
+osmsg maintain publish work/out --repo osgeonepal/osmsg-history
+```
+
+See [experiments/parquet-history](./experiments/parquet-history/README.md) for the full-history batch.
 
 ## Documentation
 

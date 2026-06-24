@@ -1,4 +1,4 @@
-"""OSM replication URL helpers — planet changefiles + planet changesets."""
+"""OSM replication URL helpers, planet changefiles + planet changesets."""
 
 from __future__ import annotations
 
