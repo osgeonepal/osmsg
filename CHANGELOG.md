@@ -1,3 +1,14 @@
+## v1.2.0 (2026-06-24)
+
+### Feat
+
+- **hisotry**: add osm hisotry for the stats
+
+### Fix
+
+- **build**: add build for the multiprocessing
+- **precommit**: fixes precommit issue in conda receipe
+
 ## v1.1.2 (2026-06-04)
 
 ### Fix
