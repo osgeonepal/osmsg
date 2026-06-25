@@ -257,3 +257,42 @@ def test_update_no_seed_without_history(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "seed_resume_state", lambda c, hurl, url: seeded.append(url))
     pipeline._seed_history_resume(conn, RunConfig(update=True, urls=["x"], history_mode="auto"))
     assert seeded == []  # nothing loaded -> no seed, falls back to normal bootstrap
+
+
+def test_ingest_retries_transient_read(tmp_path, monkeypatch):
+    import osmsg.history as history
+
+    _build_dataset(tmp_path)
+    conn = duckdb.connect()
+    create_tables(conn)
+    real = history._partition_list
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise duckdb.IOException("transient read")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(history, "_partition_list", flaky)
+    monkeypatch.setattr(history.time, "sleep", lambda _s: None)
+    split = split_window(_utc(2024, 1, 1), _utc(2024, 2, 1), fetch_manifest(str(tmp_path)))
+    n = ingest_remote(conn, split, RemoteFilters(None, False, None, None), str(tmp_path))
+    assert n == 3 and calls["n"] >= 2
+
+
+def test_ingest_gives_up_after_retries(tmp_path, monkeypatch):
+    import osmsg.history as history
+
+    _build_dataset(tmp_path)
+    conn = duckdb.connect()
+    create_tables(conn)
+
+    def always_fail(*args, **kwargs):
+        raise duckdb.IOException("down")
+
+    monkeypatch.setattr(history, "_partition_list", always_fail)
+    monkeypatch.setattr(history.time, "sleep", lambda _s: None)
+    split = split_window(_utc(2024, 1, 1), _utc(2024, 2, 1), fetch_manifest(str(tmp_path)))
+    with pytest.raises(duckdb.Error):
+        ingest_remote(conn, split, RemoteFilters(None, False, None, None), str(tmp_path))

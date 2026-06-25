@@ -150,7 +150,7 @@ def main(
     ] = None,
     workers: Annotated[
         int | None,
-        typer.Option(envvar="OSMSG_WORKERS", help="Parallel workers (default: cpu count)."),
+        typer.Option(envvar="OSMSG_WORKERS", help="Parallel parse workers (default: cpu count)."),
     ] = None,
     rows: Annotated[
         int | None,

@@ -5,6 +5,7 @@ path (a glob would make DuckDB list every partition over the HF API)."""
 import datetime as dt
 import json
 import pathlib
+import time
 from dataclasses import dataclass
 
 import duckdb
@@ -16,6 +17,7 @@ UTC = dt.UTC
 SCHEMA_VERSION = 1
 DEFAULT_HISTORY_URL = "hf://datasets/kshitijrajsharma/osmsg-history"
 HISTORY_SEQ_ID = 0
+MONTH_READ_ATTEMPTS = 4
 
 
 @dataclass
@@ -185,36 +187,47 @@ def ingest_remote(
 
     info(f"history: remote ingest {start_iso} -> {end_iso} ({len(months)} month partitions) from {history_url}")
 
+    def ingest_month(month: tuple[int, int]) -> None:
+        changesets_src = _partition_list(history_url, "changesets", [month])
+        changefiles_src = _partition_list(history_url, "changefiles", [month])
+        if changesets_src is not None:
+            conn.execute(
+                f"""INSERT INTO users
+                    SELECT uid, any_value(username) FROM {changesets_src}
+                    WHERE {in_window} AND username IS NOT NULL
+                    GROUP BY uid ON CONFLICT (uid) DO NOTHING"""
+            )
+            conn.execute(
+                f"""INSERT INTO changesets
+                    SELECT changeset_id, uid, created_at, hashtags, editor,
+                           CASE WHEN min_lon IS NOT NULL
+                                THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat) END
+                    FROM {changesets_src} WHERE {changeset_where}
+                    ON CONFLICT (changeset_id) DO NOTHING"""
+            )
+        if changefiles_src is not None:
+            conn.execute(
+                f"""INSERT INTO changeset_stats
+                    SELECT changeset_id, {HISTORY_SEQ_ID} AS seq_id, uid,
+                           nodes_created, nodes_modified, nodes_deleted,
+                           ways_created, ways_modified, ways_deleted,
+                           rels_created, rels_modified, rels_deleted,
+                           poi_created, poi_modified, tag_stats
+                    FROM {changefiles_src} WHERE {stats_where}
+                    ON CONFLICT (seq_id, changeset_id) DO NOTHING"""
+            )
+
     with progress_bar(len(months), unit="months", description="Reading history") as advance:
         for month in months:
-            changesets_src = _partition_list(history_url, "changesets", [month])
-            changefiles_src = _partition_list(history_url, "changefiles", [month])
-            if changesets_src is not None:
-                conn.execute(
-                    f"""INSERT INTO users
-                        SELECT uid, any_value(username) FROM {changesets_src}
-                        WHERE {in_window} AND username IS NOT NULL
-                        GROUP BY uid ON CONFLICT (uid) DO NOTHING"""
-                )
-                conn.execute(
-                    f"""INSERT INTO changesets
-                        SELECT changeset_id, uid, created_at, hashtags, editor,
-                               CASE WHEN min_lon IS NOT NULL
-                                    THEN ST_MakeEnvelope(min_lon, min_lat, max_lon, max_lat) END
-                        FROM {changesets_src} WHERE {changeset_where}
-                        ON CONFLICT (changeset_id) DO NOTHING"""
-                )
-            if changefiles_src is not None:
-                conn.execute(
-                    f"""INSERT INTO changeset_stats
-                        SELECT changeset_id, {HISTORY_SEQ_ID} AS seq_id, uid,
-                               nodes_created, nodes_modified, nodes_deleted,
-                               ways_created, ways_modified, ways_deleted,
-                               rels_created, rels_modified, rels_deleted,
-                               poi_created, poi_modified, tag_stats
-                        FROM {changefiles_src} WHERE {stats_where}
-                        ON CONFLICT (seq_id, changeset_id) DO NOTHING"""
-                )
+            for attempt in range(MONTH_READ_ATTEMPTS):
+                try:
+                    ingest_month(month)
+                    break
+                except duckdb.Error as exc:
+                    if attempt == MONTH_READ_ATTEMPTS - 1:
+                        raise
+                    warn(f"history: {month[0]}-{month[1]:02d} read failed ({type(exc).__name__}); retrying.")
+                    time.sleep(2 * (attempt + 1))
             advance()
 
     row = conn.execute(f"SELECT count(*) FROM changeset_stats WHERE seq_id = {HISTORY_SEQ_ID}").fetchone()

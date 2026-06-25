@@ -42,6 +42,21 @@ def test_build_config_blank_end_is_none(tmp_path):
     assert cfg.tag_mode == "none"
 
 
+def test_build_config_parses_workers(tmp_path):
+    cfg = build_config({"start": "2024-01-01", "parquet": True, "workers": "8"}, str(tmp_path))
+    assert cfg.workers == 8
+
+
+def test_build_config_blank_workers_is_none(tmp_path):
+    cfg = build_config({"start": "2024-01-01", "parquet": True, "workers": ""}, str(tmp_path))
+    assert cfg.workers is None
+
+
+def test_build_config_rejects_bad_workers(tmp_path):
+    with pytest.raises(OsmsgError, match="Workers"):
+        build_config({"start": "2024-01-01", "parquet": True, "workers": "0"}, str(tmp_path))
+
+
 def test_build_config_requires_start(tmp_path):
     with pytest.raises(OsmsgError, match="Start date"):
         build_config({"parquet": True}, str(tmp_path))

@@ -285,3 +285,10 @@ def test_cs_ts_cap_only_fires_on_update_resume(changefile_repl):
         base_url="https://planet.openstreetmap.org/replication/minute",
     )
     assert with_cs_ts[3] == without_cs_ts[3]
+
+
+def test_changeset_seq_clamps_before_replication(monkeypatch):
+    cr = ChangesetReplication()
+    monkeypatch.setattr(cr, "_state", lambda: (7_000_000, dt.datetime(2026, 6, 25, tzinfo=dt.UTC)))
+    assert cr.timestamp_to_sequence(dt.datetime(2005, 1, 1, tzinfo=dt.UTC)) == 1
+    assert cr.timestamp_to_sequence(dt.datetime(2026, 6, 24, tzinfo=dt.UTC)) <= 7_000_000

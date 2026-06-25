@@ -145,7 +145,7 @@ class ChangesetReplication:
     def timestamp_to_sequence(self, ts: datetime) -> int:
         cur_seq, last_run = self._state()
         wanted = int((ts - last_run).total_seconds() / 60) + cur_seq
-        return min(wanted, cur_seq)
+        return max(1, min(wanted, cur_seq))
 
     def sequence_to_timestamp(self, seq: int) -> datetime:
         txt = session.get(self.state_url(seq)).text

@@ -61,6 +61,19 @@ def _split(value: str | None) -> list[str] | None:
     return items if items else None
 
 
+def _parse_int(value: object, field: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        number = int(text)
+    except ValueError as exc:
+        raise OsmsgError(f"{field} must be a whole number.") from exc
+    if number < 1:
+        raise OsmsgError(f"{field} must be at least 1.")
+    return number
+
+
 def build_config(form: dict[str, object], output_dir: str) -> RunConfig:
     """Map the form fields to a RunConfig, raising OsmsgError on invalid input."""
     formats = [name for name in FORMATS if form.get(name)]
@@ -78,6 +91,7 @@ def build_config(form: dict[str, object], output_dir: str) -> RunConfig:
         tag_mode="all" if form.get("all_tags") else "none",
         summary=bool(form.get("summary")),
         formats=formats,
+        workers=_parse_int(form.get("workers"), "Workers"),
         output_dir=Path(output_dir or "."),
     )
 
@@ -133,6 +147,7 @@ class App:
             ("End (blank = now)", "end", ""),
             ("Hashtags (comma-sep)", "hashtags", ""),
             ("Tags (comma-sep)", "tags", ""),
+            ("Workers", "workers", str(os.cpu_count() or 4)),
         ]
         for i, (label, key, default) in enumerate(rows):
             ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=2)
@@ -141,7 +156,7 @@ class App:
             self.vars[key] = var
 
         preset_frame = ttk.LabelFrame(frame, text="Quick range", padding=6)
-        preset_frame.grid(row=5, column=0, columnspan=4, sticky="we", pady=6)
+        preset_frame.grid(row=6, column=0, columnspan=4, sticky="we", pady=6)
         for i, name in enumerate(PRESETS):
             ttk.Button(preset_frame, text=name, width=11, command=lambda n=name: self._apply_preset(n)).grid(
                 row=0, column=i, padx=2
@@ -149,32 +164,32 @@ class App:
 
         self.vars["all_tags"] = tk.BooleanVar()
         self.vars["summary"] = tk.BooleanVar()
-        ttk.Checkbutton(frame, text="All tags", variable=self.vars["all_tags"]).grid(row=6, column=0, sticky="w")
-        ttk.Checkbutton(frame, text="Daily summary", variable=self.vars["summary"]).grid(row=6, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="All tags", variable=self.vars["all_tags"]).grid(row=7, column=0, sticky="w")
+        ttk.Checkbutton(frame, text="Daily summary", variable=self.vars["summary"]).grid(row=7, column=1, sticky="w")
 
         fmt_frame = ttk.LabelFrame(frame, text="Formats", padding=6)
-        fmt_frame.grid(row=7, column=0, columnspan=4, sticky="we", pady=6)
+        fmt_frame.grid(row=8, column=0, columnspan=4, sticky="we", pady=6)
         for i, name in enumerate(FORMATS):
             var = tk.BooleanVar(value=name in ("parquet", "csv"))
             ttk.Checkbutton(fmt_frame, text=name, variable=var).grid(row=0, column=i, padx=4)
             self.vars[name] = var
 
         self.out_label = ttk.Label(frame, text=f"Output: {self.out_dir}")
-        self.out_label.grid(row=8, column=0, columnspan=3, sticky="w")
-        ttk.Button(frame, text="Choose folder", command=self._choose_folder).grid(row=8, column=3, sticky="e")
+        self.out_label.grid(row=9, column=0, columnspan=3, sticky="w")
+        ttk.Button(frame, text="Choose folder", command=self._choose_folder).grid(row=9, column=3, sticky="e")
 
         self.run_btn = ttk.Button(frame, text="Compute", command=self._on_run)
-        self.run_btn.grid(row=9, column=0, pady=8, sticky="w")
+        self.run_btn.grid(row=10, column=0, pady=8, sticky="w")
         self.open_btn = ttk.Button(frame, text="Open output folder", command=lambda: _open_folder(Path(self.out_dir)))
-        self.open_btn.grid(row=9, column=1, pady=8, sticky="w")
+        self.open_btn.grid(row=10, column=1, pady=8, sticky="w")
         self.spinner = ttk.Progressbar(frame, mode="indeterminate", length=160)
-        self.spinner.grid(row=9, column=2, columnspan=2, pady=8, sticky="we")
+        self.spinner.grid(row=10, column=2, columnspan=2, pady=8, sticky="we")
 
         self.log = scrolledtext.ScrolledText(frame, width=70, height=14, state="disabled")
-        self.log.grid(row=10, column=0, columnspan=4, sticky="nsew")
+        self.log.grid(row=11, column=0, columnspan=4, sticky="nsew")
 
-        ttk.Button(frame, text="About", command=self._show_about).grid(row=11, column=0, pady=(6, 0), sticky="w")
-        ttk.Label(frame, text="A project of OSGeo Nepal").grid(row=11, column=1, columnspan=3, pady=(6, 0), sticky="e")
+        ttk.Button(frame, text="About", command=self._show_about).grid(row=12, column=0, pady=(6, 0), sticky="w")
+        ttk.Label(frame, text="A project of OSGeo Nepal").grid(row=12, column=1, columnspan=3, pady=(6, 0), sticky="e")
         self.root.after(120, self._drain)
 
     def _show_about(self) -> None:

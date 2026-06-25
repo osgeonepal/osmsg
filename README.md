@@ -198,7 +198,7 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--country` | `OSMSG_COUNTRY` | unset | Geofabrik region id(s). Comma-separated when set via env. |
 | `--boundary` | `OSMSG_BOUNDARY` | unset | GeoJSON path or inline GeoJSON. |
 | `--url` | `OSMSG_URL` | `minute` | `minute`/`hour`/`day` shortcut or full URL. Comma-separated when set via env. |
-| `--workers` | `OSMSG_WORKERS` | cpu count | Parallel workers. |
+| `--workers` | `OSMSG_WORKERS` | cpu count | Parallel parse workers. |
 | `--cache-dir` | `OSMSG_CACHE_DIR` | platform cache | Where downloaded OSM files are kept across runs. |
 | `--output-dir` | `OSMSG_OUTPUT_DIR` | `.` | Where `<name>.duckdb` and exports are written. |
 | `--format` / `-f` | `OSMSG_FORMAT` | `parquet` | Repeat for multiple. Comma-separated when set via env. |

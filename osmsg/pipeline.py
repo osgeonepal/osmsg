@@ -540,21 +540,18 @@ def _processing_config(cfg: RunConfig, *, parquet_dir: Path, geom_wkt: str | Non
     }
 
 
-# Replication servers throttle many concurrent connections, so downloads stay polite regardless of
-# the worker count used for local parsing. Already-downloaded files are cached, so a rerun resumes.
 _DOWNLOAD_WORKERS = 4
 
 
 def _download_all(
     urls: list[str],
     mode: str,
-    max_workers: int,
+    workers: int,
     cookie: str | None,
     cache_dir: Path,
     label: str,
     description: str = "downloading",
 ) -> None:
-    workers = min(max_workers, _DOWNLOAD_WORKERS)
     try:
         with (
             progress_bar(len(urls), unit=label, description=description) as advance,
@@ -714,10 +711,13 @@ def run(cfg: RunConfig) -> dict[str, Any]:
                         if run_live:
                             _auto_switch_replication(cfg, cfg.end_date - cfg.start_date)
                     except duckdb.Error as exc:
-                        warn(f"history: remote ingest failed ({type(exc).__name__}: {exc}); using live path.")
                         for tbl in ("changeset_stats", "changesets", "users"):
                             conn.execute(f"DELETE FROM {tbl}")
-                        run_live = True
+                        dbmod.close(conn)
+                        raise OsmsgError(
+                            f"Reading the published history failed after retries ({type(exc).__name__}). "
+                            "Re-run to try again, narrow the date range, or pass --no-history for the live path."
+                        ) from exc
 
     max_workers = cfg.workers or _cpu_count()
     info(f"Workers: {max_workers}")
@@ -756,7 +756,13 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             cs_config["window_start_utc"] = cfg.start_date.astimezone(UTC)
 
             _download_all(
-                urls, "changeset", max_workers, None, cfg.cache_dir, "changesets", description="Downloading changesets"
+                urls,
+                "changeset",
+                _DOWNLOAD_WORKERS,
+                None,
+                cfg.cache_dir,
+                "changesets",
+                description="Downloading changesets",
             )
             _process_all(
                 urls,
@@ -819,7 +825,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         _download_all(
             urls,
             "changefiles",
-            max_workers,
+            _DOWNLOAD_WORKERS,
             cookie,
             cfg.cache_dir,
             "changefiles",

@@ -1,6 +1,5 @@
 """Downloads stay polite and a network failure becomes a clear, resumable error."""
 
-
 import pytest
 import requests
 
