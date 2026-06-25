@@ -17,7 +17,7 @@ UTC = dt.UTC
 SCHEMA_VERSION = 1
 DEFAULT_HISTORY_URL = "hf://datasets/kshitijrajsharma/osmsg-history"
 HISTORY_SEQ_ID = 0
-MONTH_READ_ATTEMPTS = 4
+MONTH_READ_ATTEMPTS = 6
 
 
 @dataclass
@@ -166,7 +166,8 @@ def ingest_remote(
     conn.execute("INSTALL spatial; LOAD spatial;")
     if history_url.startswith(("hf://", "http://", "https://", "s3://")):
         conn.execute("INSTALL httpfs; LOAD httpfs;")
-        conn.execute("SET http_retries=10; SET http_retry_wait_ms=2000; SET http_retry_backoff=1.5;")
+        conn.execute("SET http_keep_alive=true; SET http_timeout=60000;")
+        conn.execute("SET http_retries=20; SET http_retry_wait_ms=5000; SET http_retry_backoff=2;")
 
     changeset_preds = [in_window]
     if filters.hashtags:
@@ -227,7 +228,7 @@ def ingest_remote(
                     if attempt == MONTH_READ_ATTEMPTS - 1:
                         raise
                     warn(f"history: {month[0]}-{month[1]:02d} read failed ({type(exc).__name__}); retrying.")
-                    time.sleep(2 * (attempt + 1))
+                    time.sleep(min(60, 5 * 2**attempt))
             advance()
 
     row = conn.execute(f"SELECT count(*) FROM changeset_stats WHERE seq_id = {HISTORY_SEQ_ID}").fetchone()
