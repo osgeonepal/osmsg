@@ -1,3 +1,9 @@
+## v1.2.5 (2026-06-25)
+
+### Fix
+
+- **gui**: fix the concurrent download issue add workers to gui
+
 ## v1.2.4 (2026-06-25)
 
 ### Fix
