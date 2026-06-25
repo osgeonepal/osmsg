@@ -5,7 +5,7 @@ import datetime as dt
 import pytest
 
 from osmsg.exceptions import OsmsgError
-from osmsg.gui import PRESETS, build_config, preset_range
+from osmsg.gui import ABOUT_LINKS, PRESETS, build_config, preset_range
 
 UTC = dt.UTC
 NOW = dt.datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
@@ -68,3 +68,10 @@ def test_every_preset_resolves():
     for name in PRESETS:
         start, end = preset_range(name, NOW)
         assert start < end
+
+
+def test_about_links():
+    urls = {url for _label, url in ABOUT_LINKS}
+    assert "https://github.com/osgeonepal/osmsg" in urls
+    assert "https://github.com/osgeonepal/osmsg/issues" in urls
+    assert "https://github.com/sponsors/kshitijrajsharma" in urls

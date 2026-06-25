@@ -7,14 +7,21 @@ import os
 import queue
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 from typing import Any
 
+from .__version__ import __version__
 from .exceptions import NoDataFoundError, OsmsgError
 from .pipeline import RunConfig, run
 
 UTC = dt.UTC
 FORMATS = ["parquet", "csv", "json", "markdown"]
+ABOUT_LINKS = [
+    ("Star osmsg on GitHub", "https://github.com/osgeonepal/osmsg"),
+    ("Report a bug or request a feature", "https://github.com/osgeonepal/osmsg/issues"),
+    ("Sponsor the developer", "https://github.com/sponsors/kshitijrajsharma"),
+]
 PRESETS = ["Last hour", "Last day", "Last week", "Last month", "Last year", "All time"]
 _PRESET_DELTAS = {
     "Last hour": dt.timedelta(hours=1),
@@ -109,6 +116,7 @@ class App:
         from tkinter import filedialog, scrolledtext, ttk
 
         self._tk = tk
+        self._ttk = ttk
         self._filedialog = filedialog
         self.events: queue.Queue = queue.Queue()
         self.out_dir = str(Path.home() / "osmsg")
@@ -164,7 +172,25 @@ class App:
 
         self.log = scrolledtext.ScrolledText(frame, width=70, height=14, state="disabled")
         self.log.grid(row=10, column=0, columnspan=4, sticky="nsew")
+
+        ttk.Button(frame, text="About", command=self._show_about).grid(row=11, column=0, pady=(6, 0), sticky="w")
+        ttk.Label(frame, text="A project of OSGeo Nepal").grid(row=11, column=1, columnspan=3, pady=(6, 0), sticky="e")
         self.root.after(120, self._drain)
+
+    def _show_about(self) -> None:
+        tk, ttk = self._tk, self._ttk
+        win = tk.Toplevel(self.root)
+        win.title("About osmsg")
+        box = ttk.Frame(win, padding=16)
+        box.grid(sticky="nsew")
+        ttk.Label(box, text=f"osmsg {__version__}", font=("", 12, "bold")).grid(sticky="w")
+        ttk.Label(box, text="OpenStreetMap Stats Generator").grid(sticky="w")
+        ttk.Label(box, text="A project of OSGeo Nepal").grid(sticky="w", pady=(0, 10))
+        for text, url in ABOUT_LINKS:
+            link = ttk.Label(box, text=text, foreground="#1a73e8", cursor="hand2")
+            link.grid(sticky="w", pady=2)
+            link.bind("<Button-1>", lambda _event, target=url: webbrowser.open(target))
+        ttk.Button(box, text="Close", command=win.destroy).grid(sticky="e", pady=(12, 0))
 
     def _apply_preset(self, name: str) -> None:
         start, end = preset_range(name)

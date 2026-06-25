@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import requests
 from platformdirs import user_cache_dir
 from shapely.ops import unary_union
 
@@ -539,6 +540,11 @@ def _processing_config(cfg: RunConfig, *, parquet_dir: Path, geom_wkt: str | Non
     }
 
 
+# Replication servers throttle many concurrent connections, so downloads stay polite regardless of
+# the worker count used for local parsing. Already-downloaded files are cached, so a rerun resumes.
+_DOWNLOAD_WORKERS = 4
+
+
 def _download_all(
     urls: list[str],
     mode: str,
@@ -548,12 +554,19 @@ def _download_all(
     label: str,
     description: str = "downloading",
 ) -> None:
-    with (
-        progress_bar(len(urls), unit=label, description=description) as advance,
-        concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool,
-    ):
-        for _ in pool.map(lambda u: download_osm_file(u, mode=mode, cookie=cookie, cache_dir=cache_dir), urls):
-            advance()
+    workers = min(max_workers, _DOWNLOAD_WORKERS)
+    try:
+        with (
+            progress_bar(len(urls), unit=label, description=description) as advance,
+            concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool,
+        ):
+            for _ in pool.map(lambda u: download_osm_file(u, mode=mode, cookie=cookie, cache_dir=cache_dir), urls):
+                advance()
+    except requests.exceptions.RequestException as exc:
+        raise OsmsgError(
+            f"Network error downloading {label} after retries ({type(exc).__name__}). "
+            "Re-run to resume: finished downloads are cached, so it continues from where it stopped."
+        ) from exc
 
 
 def _process_all(
@@ -727,6 +740,13 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             else f"first run with {cfg.changeset_pad_hours}h backward pad"
         )
         info(f"Changesets: {len(urls)} files (seq {cs_start}-{cs_end}), {pad_note}.")
+        if len(urls) > 5000:
+            warn(
+                f"Hashtag/changeset filtering downloads the per-minute changeset stream for the live "
+                f"tail ({len(urls):,} files here). This is slow over a busy network and resumes from "
+                f"cache if interrupted; a shorter range or waiting for the dataset to cover more months "
+                f"reduces it."
+            )
 
         cs_frontier_ts = cs_repl.sequence_to_timestamp(cs_end)
 
