@@ -1,3 +1,9 @@
+## v1.2.4 (2026-06-25)
+
+### Fix
+
+- **download**: fix the concurrency on osmsg
+
 ## v1.2.3 (2026-06-24)
 
 ### Fix
