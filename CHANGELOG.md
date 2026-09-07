@@ -1,3 +1,9 @@
+## v1.3.5 (2026-09-07)
+
+### Fix
+
+- **user**: fix bug on user stats load on all time heavy query
+
 ## v1.3.4 (2026-09-06)
 
 ### Fix
