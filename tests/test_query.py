@@ -63,7 +63,7 @@ def test_summary_combines_history_and_recent(con, sources):
 
 
 def test_leaderboard_paginates_and_ranks(con, sources):
-    lb = query.leaderboard(con, "hotosm", sources)
+    lb = query.leaderboard(con, "hotosm", sources, detail=True)
     assert lb["total"] == 2 and lb["page"] == 1 and lb["total_pages"] == 1
     items = lb["items"]
     assert [(r["name"], r["changesets"], r["rank"]) for r in items] == [("alice", 2, 1), ("bob", 1, 2)]
@@ -96,7 +96,7 @@ def test_leaderboard_search_escapes_like_wildcards(con, sources):
 def test_leaderboard_includes_per_user_tag_stats(con, sources):
     # The frontend reads per-user `tag_stats` (nested {key: {value: {c, m}}}) to show building/highway
     # per contributor; regression guard that leaderboard rows carry it across the history+recent seam.
-    items = query.leaderboard(con, "hotosm", sources)["items"]
+    items = query.leaderboard(con, "hotosm", sources, detail=True)["items"]
     alice = next(r for r in items if r["name"] == "alice")
     assert alice["tag_stats"]["building"]["yes"] == {"c": 5, "m": 2}  # 4 (history) + 1 (recent) creates; 2 modifies
     bob = next(r for r in items if r["name"] == "bob")
@@ -106,7 +106,7 @@ def test_leaderboard_includes_per_user_tag_stats(con, sources):
 def test_leaderboard_per_user_recent_hashtags(con, sources):
     # The user modal shows each contributor's RECENT co-occurring hashtags only (the live tail): alice's
     # recent changeset carries #hotosm-project-2 and the co-tagged #waterproject; bob has no recent activity.
-    items = query.leaderboard(con, "hotosm", sources)["items"]
+    items = query.leaderboard(con, "hotosm", sources, detail=True)["items"]
     alice = next(r for r in items if r["name"] == "alice")
     assert set(alice["hashtags"]) == {"#hotosm-project-2", "#waterproject"}
     bob = next(r for r in items if r["name"] == "bob")
@@ -141,7 +141,7 @@ def test_global_window_stats_and_consistency(con, sources):
     assert summ["users"] == 3 and summ["changesets"] == 3
     assert summ["map_changes"] == 10  # alice 5 + bob 3 + carol 2
 
-    lb = query.global_leaderboard(con, sources, start=start, end=end)
+    lb = query.global_leaderboard(con, sources, start=start, end=end, detail=True)
     assert lb["total"] == 3  # consistency: leaderboard total equals summary users
     assert [(r["name"], r["map_changes"], r["rank"]) for r in lb["items"]] == [
         ("alice", 5, 1),
@@ -170,7 +170,7 @@ def test_global_leaderboard_gates_heavy_page_tag_stats(con, sources, monkeypatch
     # Over-threshold page skips per-user tags; editors/hashtags still attach.
     start, end = dt.datetime(2026, 7, 1, tzinfo=dt.UTC), dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
     monkeypatch.setattr(query, "_MAX_GLOBAL_TAG_MAP_CHANGES", 0)
-    lb = query.global_leaderboard(con, sources, start=start, end=end)
+    lb = query.global_leaderboard(con, sources, start=start, end=end, detail=True)
     assert lb["total"] >= 1
     assert all(r["tag_stats"] == {} for r in lb["items"])  # gated off
     alice = next(r for r in lb["items"] if r["name"] == "alice")
@@ -214,9 +214,9 @@ def test_mega_leaderboard_tags_served_from_cache(con, sources, tmp_path, monkeyp
     monkeypatch.setattr(query, "_MAX_TAG_ROWS", 1)
     s = dataclasses.replace(sources, cache_dir=str(tmp_path))
     query.warm_all_time(con, "hotosm", s)
-    gated = query.leaderboard(con, "hotosm", sources)
+    gated = query.leaderboard(con, "hotosm", sources, detail=True)
     assert gated["tags_gated"] is True and all(r["tag_stats"] == {} for r in gated["items"])
-    served = query.leaderboard(con, "hotosm", s)
+    served = query.leaderboard(con, "hotosm", s, detail=True)
     assert served["tags_gated"] is False
     alice = next(r for r in served["items"] if r["name"] == "alice")
     assert alice["tag_stats"]["building"]["yes"] == {"c": 5, "m": 2}  # 4 history (cache) + 1 recent
@@ -240,7 +240,7 @@ def test_cooccurring_hashtags_merge_case_variants(con, sources):
 def test_leaderboard_cooccurring_hashtags_merge_case_variants(con, sources):
     # Same split on the per-user chips: alice carries the tag from history and from the recent tail.
     _tag_written_both_ways(con)
-    items = query.leaderboard(con, "hotosm", sources)["items"]
+    items = query.leaderboard(con, "hotosm", sources, detail=True)["items"]
     alice = next(r for r in items if r["name"] == "alice")
     assert "#YouthMappers" not in alice["hashtags"]
     assert alice["hashtags"].count("#youthmappers") == 1
@@ -308,3 +308,106 @@ def test_recent_tail_cache_noop_without_postgres(con, sources, tmp_path):
     windowed = query._with_recent_tail_cache(con, pg, prefixes, dt.datetime(2026, 1, 1, tzinfo=dt.UTC), None)
     assert windowed is pg
     assert list(tmp_path.glob("recent_*.parquet")) == []
+
+
+def test_refresh_slice_uses_a_unique_temp_per_call(tmp_path, monkeypatch):
+    """Concurrent refreshes of the same slice must not collide on one temp file (the API is one process with
+    request threads, so a pid-based name would be identical and stomp mid-rename)."""
+    import re
+
+    monkeypatch.setattr(query, "RECENT_TTL_SECONDS", 0)  # force every call to rewrite
+    path = tmp_path / "recent_tail-deadbeef.parquet"
+    seen: list[str] = []
+
+    class _Con:
+        def execute(self, sql: str) -> None:
+            target = re.search(r"TO '([^']+)'", sql).group(1)
+            seen.append(target)
+            open(target, "wb").close()  # let os.replace publish it
+
+    query._refresh_slice(_Con(), path, "rel")
+    query._refresh_slice(_Con(), path, "rel")
+    assert len(set(seen)) == 2
+
+
+def test_atomic_copy_parquet_uses_a_unique_temp_per_call(tmp_path):
+    """Both parquet caches (history aggregate and recent tail) publish through this writer; concurrent writers
+    of the same slice must each use a distinct temp, so a shared per-process name cannot stomp one file."""
+    import re
+
+    path = tmp_path / "grain-deadbeef.parquet"
+    seen: list[str] = []
+
+    class _Con:
+        def execute(self, sql: str) -> None:
+            target = re.search(r"TO '([^']+)'", sql).group(1)
+            seen.append(target)
+            open(target, "wb").close()
+
+    query._atomic_copy_parquet(_Con(), path, "temp_table")
+    query._atomic_copy_parquet(_Con(), path, "temp_table")
+    assert len(set(seen)) == 2
+
+
+def test_user_detail_matches_hashtag_leaderboard(con, sources):
+    # Lazy single-user detail must equal what the eager (detail=True) page attach produces for that user.
+    alice = next(r for r in query.leaderboard(con, "hotosm", sources, detail=True)["items"] if r["name"] == "alice")
+    d = query.user_detail(con, 1, sources, hashtag="hotosm")
+    assert d["tag_stats"] == alice["tag_stats"]
+    assert sorted(d["editors"]) == sorted(alice["editors"])
+    assert sorted(d["hashtags"]) == sorted(alice["hashtags"])
+    assert d["tag_stats"]["building"]["yes"] == {"c": 5, "m": 2}
+
+
+def test_leaderboard_detail_false_omits_per_user(con, sources):
+    items = query.leaderboard(con, "hotosm", sources)["items"]
+    assert items and all(r["tag_stats"] == {} and r["editors"] == [] and r["hashtags"] == [] for r in items)
+
+
+def test_user_detail_dedups_changeset_under_two_hashtags(sources):
+    # A changeset matching two prefixes appears twice in the rollup; its tags must count once, and the lazy
+    # uid-first path must agree with the eager page attach (guards the filter-then-dedup ordering).
+    c = duckdb.connect()
+    cols = ", ".join(f"{col} BIGINT" for col in COUNT_COLS)
+    zeros = ", ".join(["0"] * len(COUNT_COLS))
+    struct = "STRUCT(k VARCHAR, v VARCHAR, c BIGINT, m BIGINT, l DOUBLE)[]"
+    tag = "[{'k':'building','v':'yes','c':7,'m':1,'l':NULL}]"
+    c.execute(
+        f"CREATE TABLE history (hashtag VARCHAR, changeset_id BIGINT, uid BIGINT, editor VARCHAR, "
+        f"created_at TIMESTAMP, {cols}, tags {struct})"
+    )
+    c.execute(
+        f"""INSERT INTO history VALUES
+        ('#hotosm-project-1', 1, 1, 'iD', '2026-05-01', {zeros.replace("0", "9", 1)}, {tag}),
+        ('#hotosm-project-2', 1, 1, 'iD', '2026-05-01', {zeros.replace("0", "9", 1)}, {tag})"""
+    )
+    c.execute(f"CREATE TABLE cs_stats (changeset_id BIGINT, seq_id BIGINT, uid BIGINT, {cols}, tags {struct})")
+    c.execute(
+        "CREATE TABLE csets (changeset_id BIGINT, uid BIGINT, editor VARCHAR, created_at TIMESTAMP, hashtags VARCHAR[])"
+    )
+    c.execute("CREATE TABLE users AS SELECT * FROM (VALUES (1, 'alice')) t(uid, username)")
+
+    alice = next(r for r in query.leaderboard(c, "hotosm", sources, detail=True)["items"] if r["name"] == "alice")
+    d = query.user_detail(c, 1, sources, hashtag="hotosm")
+    assert alice["tag_stats"]["building"]["yes"] == {"c": 7, "m": 1}  # counted once, not doubled to 14
+    assert d["tag_stats"] == alice["tag_stats"]
+
+
+def test_user_detail_matches_global_leaderboard(con, sources):
+    con.execute("INSERT INTO users VALUES (3, 'carol')")
+    con.execute(
+        "INSERT INTO cs_stats VALUES (10, 0, 2, 3,0,0,0,0,0,0,0,0,0,0, []), (11, 0, 3, 0,0,0,2,0,0,0,0,0,0,0, [])"
+    )
+    con.execute("INSERT INTO csets VALUES (10, 2, 'JOSM', '2026-07-06', ['#foo']), (11, 3, 'iD', '2026-07-07', [])")
+    start, end = dt.datetime(2026, 7, 1, tzinfo=dt.UTC), dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
+    alice = next(
+        r
+        for r in query.global_leaderboard(con, sources, start=start, end=end, detail=True)["items"]
+        if r["name"] == "alice"
+    )
+    d = query.user_detail(con, 1, sources, start=start, end=end)
+    assert d["tag_stats"] == alice["tag_stats"]
+    assert sorted(d["editors"]) == sorted(alice["editors"])
+    assert sorted(d["hashtags"]) == sorted(alice["hashtags"])
+    plain = query.global_leaderboard(con, sources, start=start, end=end)["items"]
+    assert all(r["tag_stats"] == {} and r["editors"] == [] and r["hashtags"] == [] for r in plain)

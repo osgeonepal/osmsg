@@ -36,6 +36,7 @@ const state = {
   search: "",
   windowStart: null,
   windowEnd: null,
+  queryHashtags: null,
   lastFetched: null,
   lastError: null,
   health: null,
@@ -474,9 +475,12 @@ function searchTerm() {
 }
 
 function endpoint(name, params) {
-  // No hashtags -> whole-OSM (global) endpoints; the co-occurring "hashtags" section maps to global trending.
-  const base = state.hashtags.length
-    ? `/api/v2/hashtag/${encodeURIComponent(state.hashtags.join(","))}/${name}`
+  // Build from the hashtags frozen when Search ran, so a later fetch (pagination, per-user detail) matches
+  // the shown leaderboard even if the chips were edited without re-running. No hashtags -> whole-OSM (global)
+  // endpoints; the co-occurring "hashtags" section maps to global trending.
+  const hts = state.queryHashtags ?? state.hashtags;
+  const base = hts.length
+    ? `/api/v2/hashtag/${encodeURIComponent(hts.join(","))}/${name}`
     : `/api/v2/global/${name === "hashtags" ? "trending" : name}`;
   const u = new URL(base, API_BASE);
   params.forEach((v, k) => u.searchParams.set(k, v));
@@ -522,6 +526,7 @@ function freezeWindow() {
   const { start, end } = rangeWindow(state.range);
   state.windowStart = start;
   state.windowEnd = end;
+  state.queryHashtags = [...state.hashtags];
 }
 function windowParams() {
   if (!state.windowStart || !state.windowEnd) freezeWindow();
@@ -722,7 +727,6 @@ async function loadLeaderboardPage(setPodium = false, forceFetch = false) {
     const env = await apiGet("leaderboard", p, ctrl.signal);
     state.batch = (env.items || []).map(transform);
     state.batchIndex = batchIndex;
-    state.tagsGated = !!env.tags_gated;
     state.total = env.total || 0;
     state.totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
     sliceBatchToRows();
@@ -1158,9 +1162,11 @@ const SPLIT_KEY_MAP = {
   natural: ["natural_created", "natural_modified"],
   amenities: ["amenities_created", "amenities_modified"],
 };
-const cellsHtml = (cells, r) =>
+const SKEL_VAL = '<span class="skeleton" style="display:inline-block;width:52px;height:15px"></span>';
+const cellsHtml = (cells, r, pendingKeys) =>
   cells
     .map(([l, k, ic, mod]) => {
+      const pending = pendingKeys?.has(k);
       if (mod === "split") {
         const [ck, mk] = SPLIT_KEY_MAP[k];
         const c = r[ck] || 0, m = r[mk] || 0;
@@ -1170,14 +1176,16 @@ const cellsHtml = (cells, r) =>
         const kmPill = metres >= 100
           ? `<span class="ov-len-pill" data-compact="${kmC}" data-full="${kmF}" title="${kmF}, length of ways created (created features only); click for the full number">${kmC}</span>`
           : "";
-        return `<div class="ov-cell ov-split${isZero ? " is-zero" : ""}">
+        const val = pending ? SKEL_VAL : `<span class="c">+${numHtml(c)}</span><span class="m">~${numHtml(m)}</span>${kmPill}`;
+        return `<div class="ov-cell ov-split${pending ? "" : isZero ? " is-zero" : ""}">
       <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
-      <div class="val"><span class="c">+${numHtml(c)}</span><span class="m">~${numHtml(m)}</span>${kmPill}</div>
+      <div class="val">${val}</div>
     </div>`;
       }
-      return `<div class="ov-cell${mod ? " " + mod : ""}${r[k] ? "" : " is-zero"}">
+      const val = pending ? SKEL_VAL : numHtml(r[k] || 0);
+      return `<div class="ov-cell${mod ? " " + mod : ""}${pending ? "" : r[k] ? "" : " is-zero"}">
     <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
-    <div class="val">${numHtml(r[k] || 0)}</div>
+    <div class="val">${val}</div>
   </div>`;
     })
     .join("");
@@ -1202,7 +1210,37 @@ function releaseModalFocus(modal) {
   _modalReturnFocus = null;
 }
 
-function openUserModal(username) {
+// Per-user detail (tag_stats/editors/hashtags) is loaded on demand when a profile opens, so the
+// leaderboard page itself stays fast. Cached on the row for the life of the current query.
+async function ensureUserDetail(r, signal) {
+  if (r._detail) return r._detail;
+  const data = await apiGet(`user/${r.uid}`, windowParams(), signal);
+  applyUserDetail(r, data);
+  r._detail = data;
+  return data;
+}
+
+let _userDetailCtrl = null;
+
+function applyUserDetail(r, d) {
+  const ts = d.tag_stats || {};
+  r.tag_stats = ts;
+  r.editors = d.editors || [];
+  r.hashtags = d.hashtags || [];
+  const b = sumTagKey(ts, "building"), h = sumTagKey(ts, "highway");
+  const lu = sumTagKey(ts, "landuse"), wt = sumTagKey(ts, "waterway");
+  const nt = sumTagKey(ts, "natural"), am = sumTagKey(ts, "amenity");
+  Object.assign(r, {
+    buildings_created: b.c, buildings_modified: b.m,
+    highways_created: h.c, highways_modified: h.m, highways_len: h.l,
+    landuse_created: lu.c, landuse_modified: lu.m,
+    waterways_created: wt.c, waterways_modified: wt.m, waterways_len: wt.l,
+    natural_created: nt.c, natural_modified: nt.m,
+    amenities_created: am.c, amenities_modified: am.m,
+  });
+}
+
+async function openUserModal(username) {
   // Podium holds the global top 3, which may not be on the current leaderboard page: search both.
   const r =
     state.rows.find((x) => x.username === username) ||
@@ -1225,21 +1263,69 @@ function openUserModal(username) {
   av.dataset.osmUid = String(r.uid);
   applyAvatar(av, r.uid, initials(r.username));
 
+  // Open immediately showing the counts already on the row; the fetch-dependent parts render as skeletons
+  // until the per-user detail loads.
+  modal.hidden = false;
+  modal.classList.add("open");
+  document.body.style.overflow = "hidden";
+  modal.dataset.uid = String(r.uid);
+  renderUserModalBody(r, !r._detail);
+  $("#user-modal-close").focus();
+  trapModalFocus(modal);
+
+  _userDetailCtrl?.abort();
+  _userDetailCtrl = new AbortController();
+  try {
+    await ensureUserDetail(r, _userDetailCtrl.signal);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    if (!modal.hidden && modal.dataset.uid === String(r.uid)) {
+      $("#user-modal-body").innerHTML =
+        `<div class="tag-stats-empty" style="margin-top:14px">Couldn't load contributor details. Please try again.</div>`;
+    }
+    return;
+  }
+  // The user may have closed or switched profiles while the detail was in flight.
+  if (modal.hidden || modal.dataset.uid !== String(r.uid)) return;
+  renderUserModalBody(r);
+}
+
+const _PENDING_FEATURE_KEYS = new Set(["buildings", "highways", "landuse", "waterways", "natural", "amenities"]);
+
+// `pending` renders the fetch-dependent parts (feature cells, editor, hashtags, tag breakdown) as skeletons
+// while the per-user detail loads; the base element counts already on the row show immediately.
+function renderUserModalBody(r, pending = false) {
+  const modal = $("#user-modal");
   const userHashtags = (r.hashtags || [])
     .filter(Boolean)
     .map((h) => "#" + String(h).replace(/^#/, ""));
-  const hashtagLine = userHashtags.length
-    ? `<div class="modal-field"><span class="modal-label">Recent hashtags</span><div class="modal-hashtags">${userHashtags.map((h) => `<span class="mh-chip">${escapeHtml(h)}</span>`).join("")}</div></div>`
-    : "";
+  let hashtagLine = "";
+  if (pending) {
+    hashtagLine = `<div class="modal-field"><span class="modal-label">Recent hashtags</span><div class="modal-hashtags">${[70, 54, 62].map((w) => `<span class="skeleton" style="display:inline-block;width:${w}px;height:18px;border-radius:999px"></span>`).join("")}</div></div>`;
+  } else if (userHashtags.length) {
+    hashtagLine = `<div class="modal-field"><span class="modal-label">Recent hashtags</span><div class="modal-hashtags">${userHashtags.map((h) => `<span class="mh-chip">${escapeHtml(h)}</span>`).join("")}</div></div>`;
+  }
   const modalEditors = (r.editors || []).filter(Boolean);
-  const editorText = modalEditors.length ? groupEditorsText(modalEditors) : "Unknown";
-  const editorLine = `<div class="modal-editor"><i data-lucide="pen-tool"></i> <span title="${escapeHtml(modalEditors.join(", "))}">${escapeHtml(editorText)}</span></div>`;
+  let editorLine;
+  if (pending) {
+    editorLine = `<div class="modal-editor"><i data-lucide="pen-tool"></i> <span class="skeleton" style="display:inline-block;width:140px;height:12px"></span></div>`;
+  } else {
+    const editorText = modalEditors.length ? groupEditorsText(modalEditors) : "Unknown";
+    editorLine = `<div class="modal-editor"><i data-lucide="pen-tool"></i> <span title="${escapeHtml(modalEditors.join(", "))}">${escapeHtml(editorText)}</span></div>`;
+  }
 
-  const { html: tagHtml, keyCount, valueCount } = tagBreakdownHtml(aggregateTagStats([r]), { maxKeys: 24, maxVals: 8 });
   let html = `<div class="modal-meta">${hashtagLine}${editorLine}</div>`;
-  html += `<div class="overview-strip">${cellsHtml(USER_TOTAL_CELLS, r)}</div>`;
+  html += `<div class="overview-strip">${cellsHtml(USER_TOTAL_CELLS, r, pending ? _PENDING_FEATURE_KEYS : null)}</div>`;
   html += `<div class="overview-strip" style="margin-top:6px">${elemCellsHtml(r)}</div>`;
 
+  if (pending) {
+    html += `<div class="ov-breakdown" style="margin-top:14px">${[80, 66, 72].map((w) => `<div class="skeleton" style="display:block;height:12px;margin:9px 0;width:${w}%"></div>`).join("")}</div>`;
+    $("#user-modal-body").innerHTML = html;
+    refreshIcons(modal);
+    return;
+  }
+
+  const { html: tagHtml, keyCount } = tagBreakdownHtml(aggregateTagStats([r]), { maxKeys: 24, maxVals: 8 });
   if (keyCount) {
     html += `
       <div class="ov-toggle" style="margin-top:10px">
@@ -1250,10 +1336,7 @@ function openUserModal(username) {
       </div>
       <div class="ov-breakdown" id="modal-tag-details" hidden style="margin-top:10px">${tagHtml}</div>`;
   } else {
-    const emptyMsg = state.tagsGated
-      ? "Per-contributor tag details aren't available yet for very large queries. The overall tag breakdown above still applies."
-      : "No detailed tag stats reported for this contributor in this window.";
-    html += `<div class="tag-stats-empty" style="margin-top:14px">${emptyMsg}</div>`;
+    html += `<div class="tag-stats-empty" style="margin-top:14px">No detailed tag stats reported for this contributor in this window.</div>`;
   }
 
   $("#user-modal-body").innerHTML = html;
@@ -1268,17 +1351,14 @@ function openUserModal(username) {
       if (c) c.textContent = open ? "▴" : "▾";
     });
   }
-  modal.hidden = false;
-  modal.classList.add("open");
-  document.body.style.overflow = "hidden";
   refreshIcons(modal);
-  $("#user-modal-close").focus();
-  trapModalFocus(modal);
 }
 
 function closeUserModal() {
   const m = $("#user-modal");
+  _userDetailCtrl?.abort();
   m.hidden = true;
+  m.dataset.uid = "";
   m.classList.remove("open");
   document.body.style.overflow = "";
   releaseModalFocus(m);
@@ -1468,6 +1548,8 @@ async function fetchAllLeaderboardRows(onProgress, signal) {
     p.set("page_size", String(SIZE));
     p.set("sort", SERVER_SORT[state.sort.key] || "map_changes");
     p.set("order", state.sort.dir);
+    // Export opts into the eager per-contributor detail (tag_stats/editors) the normal page omits.
+    p.set("detail", "true");
     if (state.search.trim()) p.set("q", state.search.trim());
     return p;
   };

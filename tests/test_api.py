@@ -197,6 +197,31 @@ def test_global_resolve_accepts_naive_datetime_window():
     assert resolved_start.tzinfo is UTC and resolved_end.tzinfo is UTC
 
 
+def test_v2_user_detail_routes_registered():
+    paths = {route.path for route in api_app.routes}
+    assert "/api/v2/hashtag/{hashtag:str}/user/{uid:int}" in paths
+    assert "/api/v2/global/user/{uid:int}" in paths
+
+
+def test_v2_hashtag_user_detail_route_returns_detail_shape(monkeypatch):
+    """The on-demand per-user route parses the comma path/uid and returns the detail dict from the query
+    layer, no live DB."""
+    from api import duck
+    from api.routers.hashtag import v2_router
+
+    async def fake_user_detail(uid, *, hashtag=None, exact=False, start=None, end=None):
+        return {"uid": uid, "hashtag": hashtag, "tag_stats": {}, "editors": [], "hashtags": []}
+
+    monkeypatch.setattr(duck, "user_detail", fake_user_detail)
+    with TestClient(app=Litestar(route_handlers=[v2_router])) as client:
+        res = client.get("/api/v2/hashtag/hotosm/user/7")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["uid"] == 7 and body["hashtag"] == ["hotosm"]
+    assert set(body) >= {"tag_stats", "editors", "hashtags"}
+
+
 def test_get_cors_origins_reads_comma_separated_env(monkeypatch):
     monkeypatch.setenv(
         "OSMSG_CORS_ORIGINS",

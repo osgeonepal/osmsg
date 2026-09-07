@@ -126,3 +126,60 @@ def test_run_reraises_real_db_error_not_as_busy(monkeypatch):
     boom.__name__ = "summary"
     with pytest.raises(duckdb.Error):  # a genuine error is a 500, not masked as 503 busy
         duck._run(boom, "hotosm", start=None, end=None)
+
+
+def test_run_maps_out_of_memory_to_503(monkeypatch):
+    monkeypatch.setattr(duck, "_QUERY_TIMEOUT", 100.0)  # watchdog never fires -> not interrupted
+    _stub_pool(monkeypatch)
+
+    def boom(con, hashtag, sources, **kwargs):
+        raise duckdb.OutOfMemoryException("failed to allocate")
+
+    boom.__name__ = "summary"
+    with pytest.raises(HTTPException) as ei:  # OOM is a capacity condition -> graceful 503, not a raw 500
+        duck._run(boom, "hotosm", start=None, end=None)
+    assert ei.value.status_code == 503
+
+
+def test_run_global_maps_out_of_memory_to_503(monkeypatch):
+    monkeypatch.setattr(duck, "_QUERY_TIMEOUT", 100.0)
+    _stub_pool(monkeypatch)
+
+    def boom(con, sources, **kwargs):
+        raise duckdb.OutOfMemoryException("failed to allocate")
+
+    boom.__name__ = "global_summary"
+    with pytest.raises(HTTPException) as ei:
+        duck._run_global(boom, start=None, end=None)
+    assert ei.value.status_code == 503
+
+
+def test_isolate_temp_dir_is_unique_per_connection(tmp_path, monkeypatch):
+    """Each pooled connection gets its own DuckDB spill dir; a shared one collides on DuckDB's non-unique
+    temp file names when connections spill concurrently."""
+    import os
+    import re
+
+    monkeypatch.setattr(duck, "_DUCKDB_TEMP_BASE", str(tmp_path))
+    seen: list[str] = []
+
+    class _Con:
+        def execute(self, sql: str) -> None:
+            seen.append(re.search(r"temp_directory='([^']+)'", sql).group(1))
+
+    duck._isolate_temp_dir(_Con())
+    duck._isolate_temp_dir(_Con())
+    assert len(set(seen)) == 2
+    assert all(os.path.isdir(p) and p.startswith(str(tmp_path)) for p in seen)
+
+
+def test_isolate_temp_dir_noop_without_base(monkeypatch):
+    monkeypatch.setattr(duck, "_DUCKDB_TEMP_BASE", None)
+    calls: list[str] = []
+
+    class _Con:
+        def execute(self, sql: str) -> None:
+            calls.append(sql)
+
+    duck._isolate_temp_dir(_Con())
+    assert calls == []

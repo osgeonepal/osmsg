@@ -64,6 +64,7 @@ class GlobalController(Controller):
         sort: str = "map_changes",
         order: str = "desc",
         q: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         if sort not in _LEADERBOARD_SORTS:
             raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(_LEADERBOARD_SORTS)}")
@@ -73,8 +74,16 @@ class GlobalController(Controller):
             raise HTTPException(status_code=400, detail="page must be >= 1")
         s, e = _resolve(window, start, end)
         return await duck.global_leaderboard(
-            start=s, end=e, page=page, page_size=page_size, sort=sort, order=order, q=q
+            start=s, end=e, page=page, page_size=page_size, sort=sort, order=order, q=q, detail=detail
         )
+
+    @get("/user/{uid:int}")
+    async def get_user(
+        self, uid: int, window: str | None = None, start: datetime | None = None, end: datetime | None = None
+    ) -> dict[str, Any]:
+        """One contributor's whole-OSM detail (tag_stats, editors, hashtags) for the window, on demand."""
+        s, e = _resolve(window, start, end)
+        return await duck.user_detail(uid, start=s, end=e)
 
     @get("/editors")
     async def get_editors(

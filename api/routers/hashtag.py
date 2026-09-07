@@ -53,12 +53,15 @@ class HashtagController(Controller):
         sort: str = "map_changes",
         order: str = "desc",
         q: str | None = None,
+        detail: bool = False,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict[str, Any]:
         """One page of the leaderboard as `{items, page, page_size, total, total_pages}`. `sort` is one of
         the element/name columns, `order` asc|desc, `q` an optional contributor-name search; all applied
-        server-side across the whole result, so paging, sorting, and searching are consistent."""
+        server-side across the whole result, so paging, sorting, and searching are consistent. Per-user
+        detail (tag_stats/editors/hashtags) is attached only with `detail=true` (the export path); the UI
+        fetches it per contributor from `/user/{uid}`."""
         if sort not in _LEADERBOARD_SORTS:
             raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(_LEADERBOARD_SORTS)}")
         if order not in ("asc", "desc"):
@@ -74,9 +77,24 @@ class HashtagController(Controller):
             sort=sort,
             order=order,
             q=q,
+            detail=detail,
             start=start,
             end=end,
         )
+
+    @get("/user/{uid:int}")
+    async def get_user(
+        self,
+        hashtag: str,
+        uid: int,
+        exact: bool = False,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> dict[str, Any]:
+        """One contributor's detail (tag_stats, editors, hashtags) for the scope, fetched on demand when a
+        profile opens. uid-scoped, so it stays fast even on an all-time mega-hashtag."""
+        start, end = _window(start, end)
+        return await duck.user_detail(uid, hashtag=_hashtags(hashtag), exact=exact, start=start, end=end)
 
     @get("/tags")
     async def get_tags(

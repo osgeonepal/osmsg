@@ -8,6 +8,7 @@ import hashlib
 import os
 import pathlib
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -91,6 +92,21 @@ def _cache_path(s: Sources, prefixes, grain: str, start, end) -> pathlib.Path | 
     return pathlib.Path(s.cache_dir) / f"{grain}-{digest}.parquet"
 
 
+def _atomic_copy_parquet(con, path: pathlib.Path, source: str) -> None:
+    """COPY `source` (a relation or a `(SELECT ...)`) to `path` as parquet via a per-call temp file, then
+    publish with os.replace. The temp name is unique per call, not per process: the API serves concurrent
+    requests as threads in one process, so a pid-based name collides when two write the same slice at once.
+    The temp is removed if the write fails."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        con.execute(f"COPY {source} TO '{tmp.as_posix()}' (FORMAT parquet)")
+        os.replace(tmp, path)
+    except (duckdb.Error, OSError):
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _materialize_history(con, temp: str, select_sql: str, params, path: pathlib.Path | None) -> None:
     """CREATE OR REPLACE TEMP TABLE `temp` from `select_sql`, memoized to `path` when set. A hit reads the
     parquet; a miss runs the aggregate then writes it via a temp file + atomic rename (concurrent misses
@@ -101,10 +117,7 @@ def _materialize_history(con, temp: str, select_sql: str, params, path: pathlib.
         return
     con.execute(f"CREATE OR REPLACE TEMP TABLE {temp} AS {select_sql}", params)
     if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        con.execute(f"COPY {temp} TO '{tmp.as_posix()}' (FORMAT parquet)")
-        os.replace(tmp, path)
+        _atomic_copy_parquet(con, path, temp)
 
 
 # All-time per-user leaderboard tags are gated off the request path for a mega hashtag and filled by a
@@ -195,10 +208,7 @@ def _refresh_slice(con, path: pathlib.Path, rel: str) -> None:
     the TTL). Atomic rename so a concurrent refresh cannot expose a half-written file."""
     if path.exists() and (time.time() - path.stat().st_mtime) < RECENT_TTL_SECONDS:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    con.execute(f"COPY (SELECT * FROM {rel}) TO '{tmp.as_posix()}' (FORMAT parquet)")
-    os.replace(tmp, path)
+    _atomic_copy_parquet(con, path, f"(SELECT * FROM {rel})")
 
 
 def _with_recent_tail_cache(con, s: Sources, prefixes, start, end) -> Sources:
@@ -515,6 +525,7 @@ def leaderboard(
     s: Sources,
     *,
     exact: bool = False,
+    detail: bool = False,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     sort: str = "map_changes",
@@ -524,8 +535,9 @@ def leaderboard(
     end: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """One page of the hashtag leaderboard as `{items, page, page_size, total, total_pages}`, ordered by
-    `sort`/`order` and filtered by the optional `q` name search and [start, end) window. Per-user
-    `tag_stats` is attached only for hashtags small enough to afford it; the aggregate lives on `/tags`."""
+    `sort`/`order` and filtered by the optional `q` name search and [start, end) window. Per-user detail
+    (`tag_stats`/editors/hashtags) is attached only with `detail=True` (the export path); viewers fetch it
+    per contributor from `user_detail`."""
     if sort not in LEADERBOARD_SORTS:
         raise ValueError(f"sort must be one of {tuple(LEADERBOARD_SORTS)}")
     if order not in ("asc", "desc"):
@@ -535,13 +547,6 @@ def leaderboard(
     prefixes = _prefixes(hashtag, exact=exact)
     s = _with_recent_tail_cache(con, s, prefixes, start, end)
     hsql, hp = _history(s, prefixes, start, end)
-    count_sql, count_params = catalog.history_scope_count(
-        s.history_rel, prefixes=prefixes, frontier=s.frontier, start=start, end=end
-    )
-    count_row = con.execute(count_sql, count_params).fetchone()
-    small_history = (count_row[0] if count_row else 0) <= _MAX_TAG_ROWS
-    # Counts stream narrow (no tags struct through the dedup) so the aggregate stays cheap; per-user tags
-    # are attached for the returned page alone. All-time memoizes the aggregate.
     _q_lb_agg = f"SELECT uid, count(*) AS changesets, {_SUM_AS}"
     _materialize_history(
         con, "_q_lb", f"{_q_lb_agg} FROM ({hsql}) GROUP BY uid", hp, _cache_path(s, prefixes, "lb_users", start, end)
@@ -580,17 +585,24 @@ def leaderboard(
     )
     for i, r in enumerate(rows):
         r["rank"] = offset + i + 1
-    if small_history:
-        _attach_user_tags(con, rows, s, prefixes, start, end)
-        tags_gated = False
-    elif _attach_user_tags_cached(con, rows, s, prefixes, start, end):
-        tags_gated = False
-    else:
+    tags_gated = False
+    if not detail:
         for r in rows:
-            r["tag_stats"] = {}
-        tags_gated = True
-    _attach_user_editors(con, rows, s, prefixes, start, end)
-    _attach_user_hashtags(con, rows, s, prefixes, start, end)
+            r["tag_stats"], r["editors"], r["hashtags"] = {}, [], []
+    else:
+        count_sql, count_params = catalog.history_scope_count(
+            s.history_rel, prefixes=prefixes, frontier=s.frontier, start=start, end=end
+        )
+        count_row = con.execute(count_sql, count_params).fetchone()
+        small_history = (count_row[0] if count_row else 0) <= _MAX_TAG_ROWS
+        if small_history:
+            _attach_user_tags(con, rows, s, prefixes, start, end)
+        elif not _attach_user_tags_cached(con, rows, s, prefixes, start, end):
+            for r in rows:
+                r["tag_stats"] = {}
+            tags_gated = True
+        _attach_user_editors(con, rows, s, prefixes, start, end)
+        _attach_user_hashtags(con, rows, s, prefixes, start, end)
     return {
         "items": rows,
         "page": page,
@@ -599,6 +611,66 @@ def leaderboard(
         "total_pages": (total + page_size - 1) // page_size,
         "tags_gated": tags_gated,
     }
+
+
+def _user_hashtag_tags(con, uid, s, prefixes, start, end) -> dict[str, Any]:
+    """One user's per-(key,value) tag breakdown for a hashtag scope. Filters uid inside the rollup scan and
+    dedups only that user's changesets, so it stays fast on a mega-hashtag yet equals the page attach (every
+    row of a changeset shares its uid and tags, so filter-then-dedup == dedup-then-filter)."""
+    prefix_params = [b for pair in prefixes for b in pair]
+    hist_pred = catalog.range_pred("hashtag", prefixes)
+    window_sql, window_params = catalog._window_clause(start, end)
+    hist = (
+        "SELECT t.k AS k, t.v AS v, t.c AS c, t.m AS m, t.l AS l FROM (SELECT UNNEST(tags) AS t FROM ("
+        f"SELECT DISTINCT ON (changeset_id) tags FROM {s.history_rel} "
+        f"WHERE ({hist_pred}) AND created_at < ?{window_sql} AND uid = ?))"
+    )
+    hist_params = [*prefix_params, s.frontier, *window_params, uid]
+    if s.pg_attach:
+        rrel = catalog.recent_user_tags(
+            s.pg_attach, [uid], prefixes=prefixes, frontier=s.frontier, start=start, end=end
+        )
+        recent, params = f"SELECT k, v, c, m, l FROM {rrel}", hist_params
+    else:
+        rsql, rp = _recent_perchangeset(s, prefixes, start, end)
+        recent = (
+            "SELECT t.k AS k, t.v AS v, t.c AS c, t.m AS m, t.l AS l "
+            f"FROM (SELECT UNNEST(tags) AS t FROM ({rsql}) WHERE uid = ?)"
+        )
+        params = [*hist_params, *rp, uid]
+    tag_rows = con.execute(
+        f"SELECT k, v, SUM(c) AS c, SUM(m) AS m, SUM(l) AS l FROM ({hist} UNION ALL {recent}) GROUP BY k, v",
+        params,
+    ).fetchall()
+    tags = [{"k": k, "v": v, "c": c, "m": m, "l": length_m} for k, v, c, m, length_m in tag_rows]
+    return _tags_to_nested(tags) if tags else {}
+
+
+def user_detail(
+    con: duckdb.DuckDBPyConnection,
+    uid: int,
+    s: Sources,
+    *,
+    hashtag: str | list[str] | None = None,
+    exact: bool = False,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+) -> dict[str, Any]:
+    """One contributor's detail (tag_stats, editors, hashtags) for the window, fetched on demand when a
+    profile opens. uid-scoped, so it stays fast even on an all-time mega-hashtag."""
+    rows: list[dict[str, Any]] = [{"uid": uid}]
+    if hashtag is None:
+        _attach_global_user_tags(con, rows, s, start, end)
+        _attach_global_user_editors(con, rows, s, start, end)
+        _attach_global_user_hashtags(con, rows, s, start, end)
+    else:
+        prefixes = _prefixes(hashtag, exact=exact)
+        s = _with_recent_tail_cache(con, s, prefixes, start, end)
+        rows[0]["tag_stats"] = _user_hashtag_tags(con, uid, s, prefixes, start, end)
+        _attach_user_editors(con, rows, s, prefixes, start, end)
+        _attach_user_hashtags(con, rows, s, prefixes, start, end)
+    r = rows[0]
+    return {"tag_stats": r.get("tag_stats", {}), "editors": r.get("editors", []), "hashtags": r.get("hashtags", [])}
 
 
 def tags(
@@ -978,6 +1050,7 @@ def global_leaderboard(
     sort: str = "map_changes",
     order: str = "desc",
     q: str | None = None,
+    detail: bool = False,
 ) -> dict[str, Any]:
     if sort not in LEADERBOARD_SORTS:
         raise ValueError(f"sort must be one of {tuple(LEADERBOARD_SORTS)}")
@@ -1006,14 +1079,18 @@ def global_leaderboard(
     rows = _rows(con.execute(f"SELECT * FROM _g_lb ORDER BY {order_by} LIMIT ? OFFSET ?", [page_size, offset]))
     for i, r in enumerate(rows):
         r["rank"] = offset + i + 1
-    # Skip the per-user tag unnest for heavy pages (cost tracks map_changes); /tags still covers the aggregate.
-    if sum(r.get("map_changes") or 0 for r in rows) <= _MAX_GLOBAL_TAG_MAP_CHANGES:
-        _attach_global_user_tags(con, rows, s, start, end)
-    else:
+    if not detail:
         for r in rows:
-            r["tag_stats"] = {}
-    _attach_global_user_editors(con, rows, s, start, end)
-    _attach_global_user_hashtags(con, rows, s, start, end)
+            r["tag_stats"], r["editors"], r["hashtags"] = {}, [], []
+    else:
+        # Skip the per-user tag unnest for heavy pages (cost tracks map_changes); /tags still covers it.
+        if sum(r.get("map_changes") or 0 for r in rows) <= _MAX_GLOBAL_TAG_MAP_CHANGES:
+            _attach_global_user_tags(con, rows, s, start, end)
+        else:
+            for r in rows:
+                r["tag_stats"] = {}
+        _attach_global_user_editors(con, rows, s, start, end)
+        _attach_global_user_hashtags(con, rows, s, start, end)
     return {
         "items": rows,
         "page": page,

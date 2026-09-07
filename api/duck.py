@@ -7,11 +7,14 @@ import asyncio
 import collections
 import contextlib
 import datetime as dt
+import glob
 import logging
 import os
 import queue
+import shutil
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
@@ -26,6 +29,7 @@ from osmsg.query import Sources
 
 _log = logging.getLogger("osmsg.api.duck")
 _PG_ATTACH = "pg"
+_BUSY_DETAIL = "Server is busy, please try again in a moment."
 
 # Warm connections (extensions + Postgres attached) reused across requests so cold-start is paid once;
 # the pool size caps concurrency, so heavy queries queue instead of thrashing the CPU.
@@ -79,12 +83,34 @@ def _frontier() -> dt.datetime:
     return manifest.frontier
 
 
+_DUCKDB_TEMP_BASE = os.environ.get("OSMSG_DUCKDB_TEMP_DIR")
+
+
+def _isolate_temp_dir(con: duckdb.DuckDBPyConnection) -> None:
+    """Give this pooled connection its own spill directory. Every pooled connection otherwise shares
+    OSMSG_DUCKDB_TEMP_DIR, and DuckDB's spill file names are not per-connection, so concurrent spills collide."""
+    if not _DUCKDB_TEMP_BASE:
+        return
+    d = os.path.join(_DUCKDB_TEMP_BASE, f"conn-{uuid.uuid4().hex}")
+    os.makedirs(d, exist_ok=True)
+    con.execute(f"SET temp_directory='{d.replace(chr(39), chr(39) * 2)}'")
+
+
+def _sweep_stale_temp_dirs() -> None:
+    """Best-effort removal of per-connection spill dirs left by a prior process, run once when the pool builds."""
+    if not _DUCKDB_TEMP_BASE:
+        return
+    for d in glob.glob(os.path.join(_DUCKDB_TEMP_BASE, "conn-*")):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _connect() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs; INSTALL json; LOAD json; INSTALL postgres; LOAD postgres;")
     con.execute("SET http_retries=10;")
     # Memory/temp pragmas so concurrent pooled queries cannot sum past the container memory cap.
     _apply_runtime_pragmas(con)
+    _isolate_temp_dir(con)
     attach_postgres(con, _libpq_dsn(), read_only=True)
     return con
 
@@ -106,6 +132,7 @@ def _pool_ready() -> queue.Queue:
     if _pool is None:
         with _pool_lock:
             if _pool is None:
+                _sweep_stale_temp_dirs()
                 warm: queue.Queue = queue.Queue()
                 for _ in range(_POOL_SIZE):
                     warm.put(_connect())
@@ -201,13 +228,17 @@ def _run(fn, hashtag, **kwargs):
     healthy = True
     try:
         return fn(con, hashtag, _sources(), **kwargs)
-    except duckdb.Error:
+    except duckdb.Error as e:
         healthy = False  # interrupted or DB error -> the connection may be dirty, recycle it
         if interrupted:
             # Only all-time queries hit the shared cache, so only they are worth warming.
             if kwargs.get("start") is None and kwargs.get("end") is None:
                 _enqueue_warm(fn, hashtag, kwargs)
-            raise HTTPException(status_code=503, detail="Server is busy, please try again in a moment.") from None
+            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
+        if isinstance(e, duckdb.OutOfMemoryException):
+            _log.warning("out of memory in %s under load, shedding as 503: %s", fn.__name__, e)
+            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
+        _log.exception("duckdb error in %s", fn.__name__)
         raise
     finally:
         done.set()
@@ -236,6 +267,7 @@ async def leaderboard(
     hashtag: str | list[str],
     *,
     exact: bool = False,
+    detail: bool = False,
     page: int = 1,
     page_size: int = query.DEFAULT_PAGE_SIZE,
     sort: str = "map_changes",
@@ -249,6 +281,7 @@ async def leaderboard(
         query.leaderboard,
         hashtag,
         exact=exact,
+        detail=detail,
         page=page,
         page_size=page_size,
         sort=sort,
@@ -260,6 +293,20 @@ async def leaderboard(
     if start is None and end is None:
         _maybe_warm_all_time(hashtag, exact)
     return res
+
+
+async def user_detail(
+    uid: int,
+    *,
+    hashtag: str | list[str] | None = None,
+    exact: bool = False,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+):
+    def run(con, s, **kw):
+        return query.user_detail(con, uid, s, **kw)
+
+    return await asyncio.to_thread(_run_global, run, hashtag=hashtag, exact=exact, start=start, end=end)
 
 
 async def tags(
@@ -341,10 +388,14 @@ def _run_global(fn, **kwargs):
     healthy = True
     try:
         return fn(con, _sources(), **kwargs)
-    except duckdb.Error:
+    except duckdb.Error as e:
         healthy = False
         if interrupted:
-            raise HTTPException(status_code=503, detail="Server is busy, please try again in a moment.") from None
+            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
+        if isinstance(e, duckdb.OutOfMemoryException):
+            _log.warning("out of memory in %s under load, shedding as 503: %s", fn.__name__, e)
+            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
+        _log.exception("duckdb error in %s", fn.__name__)
         raise
     finally:
         done.set()
@@ -402,10 +453,11 @@ async def global_leaderboard(
     sort: str = "map_changes",
     order: str = "desc",
     q: str | None = None,
+    detail: bool = False,
 ):
     return await _global_cached(
         query.global_leaderboard,
-        (page, page_size, sort, order, q),
+        (page, page_size, sort, order, q, detail),
         start,
         end,
         page=page,
@@ -413,6 +465,7 @@ async def global_leaderboard(
         sort=sort,
         order=order,
         q=q,
+        detail=detail,
     )
 
 
