@@ -62,32 +62,6 @@ function _ensureChartsSection() {
       width: 100%;
       flex: 1;
     }
-    .osmsg-metric-toggle {
-      display: flex;
-      gap: 4px;
-      margin-bottom: 12px;
-      flex-wrap: wrap;
-    }
-    .osmsg-metric-btn {
-      font-size: 11px;
-      padding: 3px 10px;
-      border-radius: 20px;
-      border: 1px solid var(--bd);
-      background: transparent;
-      color: var(--muted);
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
-      font-weight: 500;
-      letter-spacing: 0.03em;
-    }
-    .osmsg-metric-btn:hover {
-      background: var(--surface-hover, rgba(0,0,0,0.05));
-    }
-    .osmsg-metric-btn.active {
-      background: var(--ink, #1A2421);
-      color: var(--surface, #fff);
-      border-color: transparent;
-    }
     .osmsg-hashtag-stat-row {
       display: flex;
       justify-content: space-between;

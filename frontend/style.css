@@ -582,7 +582,7 @@ a:hover {
 .field-input:focus-within {
     border-color: var(--green);
     background: var(--surface);
-    box-shadow: 0 0 0 3px rgba(45, 95, 63, 0.12);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent);
 }
 
 .exact-toggle {
@@ -647,7 +647,7 @@ a:hover {
     font-size: 12.5px;
     font-weight: 500;
     font-family: var(--font-mono);
-    border: 1px solid rgba(45, 95, 63, 0.2);
+    border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
 }
 
 .chip-label {
@@ -668,7 +668,7 @@ a:hover {
     border: 0;
     cursor: pointer;
     padding: 0;
-    color: rgba(31, 77, 46, 0.6);
+    color: var(--green-soft);
     position: relative;
 }
 
@@ -681,7 +681,7 @@ a:hover {
 
 .chip button:hover {
     color: var(--green-deep);
-    background: rgba(45, 95, 63, 0.15);
+    background: color-mix(in srgb, var(--green) 15%, transparent);
 }
 
 .chip button [data-lucide] {
@@ -790,17 +790,41 @@ a:hover {
 }
 
 .custom-range {
+    position: relative;
     display: none;
     grid-column: 1 / -1;
     flex-direction: column;
     gap: 16px;
     margin-top: 4px;
-    padding-top: 16px;
-    border-top: 1px solid var(--bd);
+    padding-top: 8px;
 }
 
 .custom-range.show {
     display: flex;
+}
+
+.cr-close {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--bd);
+    border-radius: 9999px;
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cr-close:hover {
+    background: var(--surface-alt);
+    color: var(--ink);
+    border-color: var(--bd-strong);
 }
 
 @media (min-width: 760px) {
@@ -1279,7 +1303,7 @@ span.flatpickr-weekday {
 main {
     max-width: var(--container);
     margin: 0 auto;
-    padding: 0 24px 64px;
+    padding: 0 24px;
     display: grid;
     gap: 28px;
     min-width: 0;
@@ -1298,22 +1322,23 @@ main>section {
     flex-wrap: wrap;
 }
 
+/* Section eyebrow, matched to .osmsg-chart-title so every section is labelled the same way. */
 .section-title {
-    font-family: var(--font-serif);
-    font-size: 22px;
-    font-weight: 500;
-    color: var(--ink);
-    margin: 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    font-weight: 600;
+    margin: 0 0 12px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    letter-spacing: -0.01em;
+    gap: 6px;
 }
 
 .section-title [data-lucide] {
     color: var(--green);
-    width: 20px;
-    height: 20px;
+    width: 14px;
+    height: 14px;
 }
 
 .section-meta {
@@ -1341,18 +1366,39 @@ main>section {
 }
 
 .ov-cell {
+    position: relative;
     padding: 14px;
     background: var(--surface);
     border: 1px solid var(--bd);
     border-radius: 12px;
     box-shadow: var(--shadow-s1);
-    transition: all 0.2s;
+    transition: box-shadow 0.2s, border-color 0.2s;
     cursor: pointer;
 }
 
 .ov-cell:hover {
     box-shadow: var(--shadow-s2);
     border-color: var(--bd-strong, var(--bd));
+}
+
+/* Discoverable affordance for the compact<->exact number toggle, so it does not depend on a tooltip.
+   Hidden on zero cells, which toggle nothing. */
+.ov-cell:not(.is-zero)::after {
+    content: "\2922";
+    position: absolute;
+    top: 7px;
+    right: 8px;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+.ov-cell:not(.is-zero):hover::after,
+.ov-cell:not(.is-zero):focus-visible::after {
+    opacity: 0.55;
 }
 
 .ov-cell.raw .val {
@@ -1589,8 +1635,8 @@ button.ht-tag-add:hover {
 }
 
 .ht-pg {
-    width: 24px;
-    height: 24px;
+    width: 30px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1632,7 +1678,7 @@ button.ht-tag-add:hover {
     left: 0;
     top: calc(100% + 8px);
     width: max-content;
-    max-width: 260px;
+    max-width: min(260px, 78vw);
     background: var(--ink);
     color: #fff;
     font-size: 11px;
@@ -1649,6 +1695,12 @@ button.ht-tag-add:hover {
     transition: opacity 0.15s, transform 0.15s;
     z-index: 60;
     pointer-events: none;
+}
+
+/* The trailing (Exact Match) tip sits near the right edge; anchor it to the right so it stays on-screen. */
+.info-tip-end::after {
+    left: auto;
+    right: 0;
 }
 
 .info-tip:hover::after,
@@ -1814,11 +1866,23 @@ button.ht-tag-add:hover {
     opacity: 0.5;
 }
 
-.wb-right {
-    margin-left: auto;
+.ov-toggle-row {
+    margin-top: 12px;
+}
+
+/* The overview expander is a full-width bar so it reads as the control for the breakdown below it. */
+#ov-toggle-btn {
+    width: 100%;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-radius: 12px;
+}
+
+.ov-toggle-end {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    color: var(--muted);
 }
 
 .ov-toggle {
@@ -1846,12 +1910,11 @@ button.ht-tag-add:hover {
     border-radius: 9999px;
     color: var(--ink-2);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 
 .ov-toggle-btn:hover:not(:disabled) {
     border-color: var(--bd-strong);
-    background: var(--surface-alt);
 }
 
 .ov-toggle-btn:disabled {
@@ -1888,7 +1951,7 @@ button.ht-tag-add:hover {
     padding: 12px;
     background: var(--surface);
     border: 1px solid var(--bd);
-    border-radius: 8px;
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -2016,9 +2079,29 @@ button.ht-tag-add:hover {
 }
 
 .tag-key-more {
+    margin-top: 10px;
+    text-align: center;
     font-size: 11px;
     color: var(--muted);
     font-style: italic;
+}
+
+.tag-see-all {
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    border: 1px solid var(--bd);
+    background: var(--surface);
+    color: var(--green);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.tag-see-all:hover {
+    border-color: var(--green);
+    background: color-mix(in srgb, var(--green) 8%, transparent);
 }
 
 .tag-stats-empty {
@@ -2056,15 +2139,20 @@ button.ht-tag-add:hover {
     align-items: center;
     gap: 3px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: transform 0.2s, box-shadow 0.2s;
     box-shadow: var(--shadow-s1);
 }
 
-.pod:hover,
+.pod:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-pop);
+}
+
 .pod:focus-visible {
     transform: translateY(-2px);
     box-shadow: var(--shadow-pop);
-    outline: none;
+    outline: 2px solid var(--green);
+    outline-offset: 2px;
 }
 
 .pod-1 {
@@ -2146,52 +2234,6 @@ button.ht-tag-add:hover {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.pod-hashtag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 6px;
-    padding: 4px 10px;
-    background: var(--green-pale);
-    color: var(--green-deep);
-    border: 1px solid rgba(45, 95, 63, 0.2);
-    border-radius: 9999px;
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--font-mono);
-    line-height: 3;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-bottom: 14px;
-}
-
-.hashtag-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 10px;
-    margin-bottom: 1px;
-}
-
-.hashtag-item {
-    padding: 6px 10px;
-    border-radius: 10px;
-    background: var(--surface);
-    border: 1px solid #e6dfd2;
-    font-size: 12px;
-    color: #1a2421;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.hashtag-item .hash {
-    color: #6b7a72;
-    font-weight: 700;
 }
 
 .pod-score-wrap {
@@ -2315,7 +2357,7 @@ button.ht-tag-add:hover {
 .search-input:focus-within {
     border-color: var(--green);
     background: var(--surface);
-    box-shadow: 0 0 0 3px rgba(45, 95, 63, 0.12);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent);
 }
 
 .search-input input {
@@ -2444,6 +2486,19 @@ button.ht-tag-add:hover {
     color: var(--ink);
 }
 
+/* Whole-OSM mode does not support sorting, so the headers must not look interactive. */
+.lb.no-sort th.sortable {
+    cursor: default;
+}
+
+.lb.no-sort th.sortable:hover {
+    color: var(--muted);
+}
+
+.lb.no-sort th .arrow {
+    display: none;
+}
+
 .lb th .arrow {
     display: inline-block;
     width: 12px;
@@ -2460,7 +2515,7 @@ button.ht-tag-add:hover {
 
 .lb tbody td {
     padding: 10px 12px;
-    border-bottom: 1px solid rgba(229, 224, 213, 0.7);
+    border-bottom: 1px solid var(--bd);
 }
 
 .lb tbody tr {
@@ -2653,8 +2708,12 @@ button.ht-tag-add:hover {
     background: var(--surface);
     color: var(--ink);
     font-size: 12px;
-    outline: none;
     cursor: pointer;
+}
+
+.page-size select:focus-visible {
+    outline: 2px solid var(--green);
+    outline-offset: 1px;
 }
 
 /* modal */
@@ -2913,7 +2972,7 @@ button.ht-tag-add:hover {
     left: 50%;
     transform: translate(-50%, 8px);
     padding: 10px 16px;
-    background: var(--ink);
+    background: var(--green);
     color: #fff;
     border-radius: 9999px;
     box-shadow: var(--shadow-pop);
@@ -3259,7 +3318,7 @@ footer {
     }
 
     main {
-        padding: 0 14px 40px;
+        padding: 0 14px;
         gap: 20px;
     }
 
@@ -3279,7 +3338,6 @@ footer {
     .ov-cell {
         padding: 10px;
         border-radius: 10px;
-        margin-bottom: 8px;
     }
 
     .ov-cell .lbl {
@@ -3440,97 +3498,6 @@ footer {
         display: none;
     }
 }
-
-/* Podium hashtag */
-.pod-hashtag {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 4px;
-    padding: 4px 10px;
-    background: var(--green-pale);
-    color: var(--green-deep);
-    border: 1px solid rgba(45, 95, 63, 0.2);
-    border-radius: 9999px;
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--font-mono);
-    line-height: 1;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.editor-section {
-    margin: 12px 0;
-  }
-
-  .editor-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 10px;
-  }
-
-  .editor-card {
-    background: var(--surface);
-    border: 1px solid #e5e0d5;
-    border-radius: 10px;
-    padding: 10px 12px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  }
-
-  .editor-name {
-    font-weight: 600;
-    font-size: 13px;
-    margin-bottom: 6px;
-  }
-
-  .editor-meta {
-    font-size: 12px;
-    color: #555;
-    display: flex;
-    justify-content: space-between;
-  }
-  @media (max-width: 768px) {
-    #editor-stats .overview-strip {
-      grid-template-columns: repeat(2, 1fr) !important;
-    }
-  }
-  @media (max-width: 480px) {
-    #editor-stats .overview-strip {
-      grid-template-columns: 1fr !important;
-    }
-  }
-  .pod-editor-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding-top: 7px;
-    margin-top: 2px;
-    border-top: 0.5px solid var(--border, #E0DDD4);
-  }
-  .pod-editor-label {
-    font-size: 10px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    flex-shrink: 0;
-  }
-  .pod-editor-badge {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: var(--surface-alt);
-    color: var(--muted);
-    border: 0.5px solid var(--bd-strong);
-    max-width: 130px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    transition: background .2s, color .2s;
-  }
 
 /* accessibility + touch polish */
 @media (prefers-reduced-motion: reduce) {

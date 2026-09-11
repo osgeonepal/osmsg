@@ -37,6 +37,8 @@ const state = {
   windowStart: null,
   windowEnd: null,
   queryHashtags: null,
+  queryParamStr: null,
+  tagsPending: false,
   lastFetched: null,
   lastError: null,
   health: null,
@@ -419,6 +421,9 @@ crClearBtn?.addEventListener("click", () => {
   updateCrChip();
 });
 
+// Explicit close for the date picker; keeps the recorded range, same as re-clicking Custom.
+$("#cr-close")?.addEventListener("click", () => customRangePanel.classList.remove("show"));
+
 function setRangePreset(k) {
   $$(".preset button").forEach((b) =>
     b.setAttribute("aria-pressed", b.dataset.range === k ? "true" : "false")
@@ -526,7 +531,6 @@ function freezeWindow() {
   const { start, end } = rangeWindow(state.range);
   state.windowStart = start;
   state.windowEnd = end;
-  state.queryHashtags = [...state.hashtags];
 }
 function windowParams() {
   if (!state.windowStart || !state.windowEnd) freezeWindow();
@@ -539,6 +543,11 @@ function windowParams() {
   // Exact match applies only to hashtag endpoints; the global (no-hashtag) ones don't accept it.
   if (state.exact && state.hashtags.length) p.set("exact", "true");
   return p;
+}
+// The hashtags + window+exact params captured when the shown results were fetched, so an on-demand fetch
+// (profile modal, pagination, editors, export) matches the displayed rows even if the query was re-staged.
+function queryParams() {
+  return new URLSearchParams(state.queryParamStr ?? windowParams().toString());
 }
 
 // Chips, range and search boxes only stage the query; nothing loads until the user hits Search.
@@ -571,6 +580,7 @@ function setBusy(busy) {
   if (!btn) return;
   const on = _busyCount > 0;
   btn.classList.toggle("is-loading", on);
+  $("#last-updated .ico-sm")?.classList.toggle("ico-spin", on);
   const label = btn.querySelector(".btn-label");
   if (label && !on) label.textContent = "Extract";
 }
@@ -627,6 +637,10 @@ async function runQuery() {
   setPodiumLoading();
   if (typeof setChartsLoading === "function") setChartsLoading();
   const base = windowParams();
+  // Freeze the hashtags + params this query runs with; on-demand fetches reuse them so their scope always
+  // matches the rows on screen, even after the range or chips are re-staged without re-running.
+  state.queryHashtags = [...state.hashtags];
+  state.queryParamStr = base.toString();
   const alive = () => state.query === ctrl;
   const param = (extra) => {
     const p = new URLSearchParams(base);
@@ -669,10 +683,14 @@ async function runQuery() {
 
     await runSection("tag breakdown", ctrl, async () => {
       setStatus("Fetching tag breakdown…");
-      const tags = await apiGet("tags", param({ limit: "200" }), ctrl.signal);
-      if (!alive()) return;
-      state.tagRows = tags;
-      renderOverviewDetails();
+      try {
+        const tags = await apiGet("tags", param({ limit: "200" }), ctrl.signal);
+        if (!alive()) return;
+        state.tagRows = tags;
+      } finally {
+        state.tagsPending = false;
+        if (alive()) renderOverviewDetails();
+      }
     });
   } catch (err) {
     // Primary failure: state it in every primary section instead of leaving blank skeletons.
@@ -717,7 +735,7 @@ async function loadLeaderboardPage(setPodium = false, forceFetch = false) {
   const ctrl = new AbortController();
   state.lbInflight = ctrl;
   const timeout = setTimeout(() => ctrl.abort(), LEADERBOARD_TIMEOUT_MS);
-  const p = windowParams();
+  const p = queryParams();
   p.set("page", String(batchIndex + 1));
   p.set("page_size", String(state.batchSize));
   p.set("sort", SERVER_SORT[state.sort.key] || "map_changes");
@@ -809,7 +827,7 @@ function aggregateTagStats(rows) {
   }
   return agg;
 }
-function tagBreakdownHtml(agg, { maxKeys = 10 } = {}) {
+function tagBreakdownHtml(agg, { maxKeys = 10, src = null } = {}) {
   const keys = Object.entries(agg)
     .filter(([, v]) => v.totalC + v.totalM > 0)
     .sort((a, b) => b[1].totalC + b[1].totalM - (a[1].totalC + a[1].totalM));
@@ -840,8 +858,12 @@ function tagBreakdownHtml(agg, { maxKeys = 10 } = {}) {
       })
       .join("") +
     `</div>`;
-  if (keys.length > maxKeys)
-    html += `<div class="tag-key-more" style="margin-top:10px;text-align:center">+ ${fmt.format(keys.length - maxKeys)} more key${keys.length - maxKeys === 1 ? "" : "s"} not shown</div>`;
+  if (keys.length > maxKeys) {
+    const rest = keys.length - maxKeys;
+    html += src
+      ? `<div class="tag-key-more"><button type="button" class="tag-see-all" data-see-all="${src}">See all ${fmt.format(keys.length)} tag keys</button></div>`
+      : `<div class="tag-key-more">+ ${fmt.format(rest)} more key${rest === 1 ? "" : "s"} not shown</div>`;
+  }
   return { html, keyCount: keys.length, valueCount };
 }
 
@@ -866,10 +888,14 @@ const OV_CELLS = [
 ];
 // Only line features carry a meaningful length; areas (buildings, landuse) and points (POIs) do not.
 const LINEAR_CELLS = new Set(["highways", "waterways"]);
+const SKEL_VAL = '<span class="skeleton" style="display:inline-block;width:52px;height:15px"></span>';
+// The "click to toggle" hint is added only to non-zero, non-pending cells so it is not stamped on every
+// tile; per-number titles are dropped because the +/~/- glyphs and colours already carry the meaning.
 const renderOvCell =
-  (data) =>
+  (data, pendingKeys) =>
     ([l, k, ic, mod, desc]) => {
-      const tip = escapeHtml(`${desc} · click to toggle exact numbers`);
+      const pending = pendingKeys?.has(k);
+      const tip = (nonzero) => ` title="${escapeHtml(nonzero ? `${desc} · click to toggle exact numbers` : desc)}"`;
       if (mod === "split") {
         const c = data[k] || 0, m = data[k + "_mod"] || 0;
         const isZero = !c && !m;
@@ -877,27 +903,29 @@ const renderOvCell =
         const showKm = LINEAR_CELLS.has(k) && metres >= 100;
         const kmC = `${compact(metres / 1000)} km`, kmF = `${fmt.format(Math.round(metres / 1000))} km`;
         const pill = showKm
-          ? `<span class="ov-len-pill" data-compact="${kmC}" data-full="${kmF}" title="${escapeHtml(l)}, length of ways created (created features only); click for the full number">${kmC}</span>`
+          ? `<span class="ov-len-pill" data-compact="${kmC}" data-full="${kmF}" title="${escapeHtml(l)}, length of ways created; click for the full number">${kmC}</span>`
           : "";
-        return `<div class="ov-cell ov-split${isZero ? " is-zero" : ""}" title="${tip}">
+        const val = pending ? SKEL_VAL : `<span class="c">+${numHtml(c)}</span><span class="m">~${numHtml(m)}</span>${pill}`;
+        return `<div class="ov-cell ov-split${pending ? "" : isZero ? " is-zero" : ""}"${pending ? "" : tip(!isZero)}>
       <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
-      <div class="val"><span class="c" title="created">+${numHtml(c)}</span><span class="m" title="modified">~${numHtml(m)}</span>${pill}</div>
+      <div class="val">${val}</div>
     </div>`;
       }
       if (mod === "elem") {
         const c = data[k + "_c"] || 0, m = data[k + "_m"] || 0, d = data[k + "_d"] || 0;
         const isZero = !c && !m && !d;
-        return `<div class="ov-cell ov-elem${isZero ? " is-zero" : ""}" title="${tip}">
+        return `<div class="ov-cell ov-elem${isZero ? " is-zero" : ""}"${tip(!isZero)}>
       <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
-      <div class="val"><span class="c" title="created">+${numHtml(c)}</span><span class="m" title="modified">~${numHtml(m)}</span><span class="d" title="deleted">−${numHtml(d)}</span></div>
+      <div class="val"><span class="c">+${numHtml(c)}</span><span class="m">~${numHtml(m)}</span><span class="d">−${numHtml(d)}</span></div>
     </div>`;
       }
-      return `<div class="ov-cell${mod ? " " + mod : ""}${data[k] ? "" : " is-zero"}" title="${tip}">
+      const zero = !data[k];
+      return `<div class="ov-cell${mod ? " " + mod : ""}${zero ? " is-zero" : ""}"${tip(!zero)}>
     <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
     <div class="val">${numHtml(data[k] || 0)}</div>
   </div>`;
     };
-const ovCellsHtml = (data) => OV_CELLS.map(renderOvCell(data)).join("");
+const ovCellsHtml = (data, pendingKeys) => OV_CELLS.map(renderOvCell(data, pendingKeys)).join("");
 const ovTotalsHtml = (data) => OV_CELLS_TOTALS.map(renderOvCell(data)).join("");
 // The /summary totals mapped to the overview's element cells; created/modified/deleted fold node+way+rel.
 function summaryToData(s) {
@@ -953,8 +981,8 @@ function setOverviewLoading() {
   $("#overview")?.closest("section")?.style.setProperty("display", "");
   const skel = Array.from({ length: 5 }, () => `<div class="ov-cell"><div class="skeleton" style="height:12px;width:60px"></div><div class="skeleton" style="height:20px;width:90px;margin-top:8px"></div></div>`).join("");
   $("#ov-strip-totals").innerHTML = skel;
+  state.tagsPending = true;
   setDetailsOpen(false);
-  $("#ov-toggle-btn").disabled = true;
   $("#ov-breakdown-meta").textContent = "";
 }
 
@@ -986,10 +1014,20 @@ function renderOverviewTotals() {
 
 function renderOverviewDetails() {
   const data = { ...(state.summary ? summaryToData(state.summary) : {}), ...tagRowsToData(state.tagRows) };
+  const meta = $("#ov-breakdown-meta");
+  // While the tag fetch is in flight, skeleton the tag-derived cells and the breakdown instead of showing
+  // zeros and a false "no tag stats" message that then swap to real values.
+  if (state.tagsPending) {
+    $("#ov-strip").innerHTML = ovCellsHtml(data, _PENDING_FEATURE_KEYS);
+    $("#ov-breakdown").innerHTML = [80, 66, 72].map((w) => `<div class="skeleton" style="display:block;height:12px;margin:9px 0;width:${w}%"></div>`).join("");
+    meta.textContent = "";
+    refreshIcons($("#ov-strip"));
+    return;
+  }
   $("#ov-strip").innerHTML = ovCellsHtml(data);
-  const btn = $("#ov-toggle-btn"), meta = $("#ov-breakdown-meta");
   const agg = tagRowsToAgg(state.tagRows);
-  const { html, keyCount, valueCount } = tagBreakdownHtml(agg);
+  state.overviewTagAgg = agg;
+  const { html, keyCount, valueCount } = tagBreakdownHtml(agg, { src: "overview" });
   if (keyCount) {
     $("#ov-breakdown").innerHTML = html;
     meta.textContent = `${fmt.format(keyCount)} tag key${keyCount === 1 ? "" : "s"} · ${fmt.format(valueCount)} value${valueCount === 1 ? "" : "s"} available`;
@@ -997,7 +1035,6 @@ function renderOverviewDetails() {
     $("#ov-breakdown").innerHTML = `<div class="tag-stats-empty">No detailed tag stats reported in this window.</div>`;
     meta.textContent = "";
   }
-  btn.disabled = false;
   refreshIcons($("#ov-details"));
 }
 
@@ -1048,17 +1085,17 @@ function renderPodium() {
       <span class="pod-name" title="${escapeHtml(r.username)}">${escapeHtml(r.username)}</span>
       <span class="pod-score-wrap">
         <div class="pod-score-line">
-          <span class="pod-score" title="${fmt.format(r.map_changes)} map changes">${compact(r.map_changes)}</span>
-          <span class="pod-cs" title="${fmt.format(r.changesets || 0)} changesets">
+          <span class="pod-score">${compact(r.map_changes)}</span>
+          <span class="pod-cs">
             <i data-lucide="git-commit-horizontal"></i>${compact(r.changesets || 0)}
           </span>
         </div>
         <div class="pod-score-label">changes · changesets</div>
       </span>
       <div class="pod-mini" aria-label="Created, modified, deleted">
-        <span class="c" title="${fmt.format(created)} created"><i data-lucide="plus"></i>${compact(created)}</span>
-        <span class="m" title="${fmt.format(modified)} modified"><i data-lucide="pencil"></i>${compact(modified)}</span>
-        <span class="d" title="${fmt.format(deleted)} deleted"><i data-lucide="minus"></i>${compact(deleted)}</span>
+        <span class="c"><i data-lucide="plus"></i>${compact(created)}</span>
+        <span class="m"><i data-lucide="pencil"></i>${compact(modified)}</span>
+        <span class="d"><i data-lucide="minus"></i>${compact(deleted)}</span>
       </div>`;
 
     applyAvatar(div.querySelector(".pod-avatar"), r.uid, initials(r.username));
@@ -1146,9 +1183,9 @@ const elemCellsHtml = (r) =>
     return `<div class="ov-cell ov-elem${isZero ? " is-zero" : ""}">
     <div class="lbl"><i data-lucide="${ic}"></i>${l}</div>
     <div class="val">
-      <span class="c" title="created">+${numHtml(c)}</span>
-      <span class="m" title="modified">~${numHtml(m)}</span>
-      <span class="d" title="deleted">−${numHtml(d)}</span>
+      <span class="c">+${numHtml(c)}</span>
+      <span class="m">~${numHtml(m)}</span>
+      <span class="d">−${numHtml(d)}</span>
     </div>
   </div>`;
   }).join("");
@@ -1162,7 +1199,6 @@ const SPLIT_KEY_MAP = {
   natural: ["natural_created", "natural_modified"],
   amenities: ["amenities_created", "amenities_modified"],
 };
-const SKEL_VAL = '<span class="skeleton" style="display:inline-block;width:52px;height:15px"></span>';
 const cellsHtml = (cells, r, pendingKeys) =>
   cells
     .map(([l, k, ic, mod]) => {
@@ -1214,7 +1250,7 @@ function releaseModalFocus(modal) {
 // leaderboard page itself stays fast. Cached on the row for the life of the current query.
 async function ensureUserDetail(r, signal) {
   if (r._detail) return r._detail;
-  const data = await apiGet(`user/${r.uid}`, windowParams(), signal);
+  const data = await apiGet(`user/${r.uid}`, queryParams(), signal);
   applyUserDetail(r, data);
   r._detail = data;
   return data;
@@ -1325,16 +1361,18 @@ function renderUserModalBody(r, pending = false) {
     return;
   }
 
-  const { html: tagHtml, keyCount } = tagBreakdownHtml(aggregateTagStats([r]), { maxKeys: 24, maxVals: 8 });
+  const userAgg = aggregateTagStats([r]);
+  state.modalTagAgg = userAgg;
+  const { html: tagHtml, keyCount } = tagBreakdownHtml(userAgg, { maxKeys: 24, src: "user" });
   if (keyCount) {
     html += `
       <div class="ov-toggle" style="margin-top:10px">
         <span class="ov-breakdown-meta"><i data-lucide="tags"></i> Detailed tag contributions · ${fmt.format(keyCount)} key${keyCount === 1 ? "" : "s"}</span>
-        <button type="button" class="ov-toggle-btn" id="modal-tag-toggle" aria-expanded="false" aria-controls="modal-tag-details">
-          <span id="modal-tag-label">Show details</span><span class="ov-caret" aria-hidden="true">▾</span>
+        <button type="button" class="ov-toggle-btn" id="modal-tag-toggle" aria-expanded="true" aria-controls="modal-tag-details">
+          <span id="modal-tag-label">Hide details</span><span class="ov-caret" aria-hidden="true">▴</span>
         </button>
       </div>
-      <div class="ov-breakdown" id="modal-tag-details" hidden style="margin-top:10px">${tagHtml}</div>`;
+      <div class="ov-breakdown" id="modal-tag-details" style="margin-top:10px">${tagHtml}</div>`;
   } else {
     html += `<div class="tag-stats-empty" style="margin-top:14px">No detailed tag stats reported for this contributor in this window.</div>`;
   }
@@ -1366,22 +1404,26 @@ function closeUserModal() {
 
 function renderTable() {
   const tb = $("#lb-body");
+  // Sorting is only supported for hashtag queries; in whole-OSM mode the headers must not look clickable.
+  const sortable = !!state.hashtags.length;
+  tb.closest("table")?.classList.toggle("no-sort", !sortable);
   if (!state.rows.length) {
     tb.innerHTML = `<tr><td colspan="8"><div class="empty"><i data-lucide="search-x"></i><h3>Nothing to show</h3><p>${state.search ? "No contributor matches your search." : "No data for this time range and hashtag combination yet."}</p></div></td></tr>`;
     refreshIcons(tb);
     renderPagination();
     return;
   }
-  $$("th.sortable").forEach((th) => {
-    const k = th.dataset.sort, arrow = th.querySelector(".arrow");
-    if (k === state.sort.key) {
-      th.setAttribute("aria-sort", state.sort.dir === "asc" ? "ascending" : "descending");
-      arrow.setAttribute("data-lucide", state.sort.dir === "asc" ? "arrow-up" : "arrow-down");
-    } else {
-      th.removeAttribute("aria-sort");
-      arrow.setAttribute("data-lucide", "chevrons-up-down");
-    }
-  });
+  if (sortable)
+    $$("th.sortable").forEach((th) => {
+      const k = th.dataset.sort, arrow = th.querySelector(".arrow");
+      if (k === state.sort.key) {
+        th.setAttribute("aria-sort", state.sort.dir === "asc" ? "ascending" : "descending");
+        arrow.setAttribute("data-lucide", state.sort.dir === "asc" ? "arrow-up" : "arrow-down");
+      } else {
+        th.removeAttribute("aria-sort");
+        arrow.setAttribute("data-lucide", "chevrons-up-down");
+      }
+    });
   tb.innerHTML = state.rows
     .map((r) => {
       const rank = r.rank;
@@ -1543,7 +1585,7 @@ function buildCsv(rows) {
 async function fetchAllLeaderboardRows(onProgress, signal) {
   const SIZE = 100;
   const params = (page) => {
-    const p = windowParams();
+    const p = queryParams();
     p.set("page", String(page));
     p.set("page_size", String(SIZE));
     p.set("sort", SERVER_SORT[state.sort.key] || "map_changes");
@@ -1690,7 +1732,7 @@ function renderEditorStats() {
 async function fetchEditorStats() {
   if (!state.query) { state.editorStats = null; renderEditorStats(); return; }
   try {
-    const editors = await apiGet("editors", windowParams(), state.query?.signal);
+    const editors = await apiGet("editors", queryParams(), state.query?.signal);
     const all = (editors || [])
       .slice()
       .sort((a, b) => (b.map_changes || 0) - (a.map_changes || 0))
@@ -1843,6 +1885,41 @@ $("#methodology-link")?.addEventListener("click", (e) => { e.preventDefault(); o
 $("#methodology-close")?.addEventListener("click", closeMethodology);
 mthModal?.addEventListener("click", (e) => { if (e.target === mthModal) closeMethodology(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && mthModal?.classList.contains("open")) closeMethodology(); });
+
+// "See all tag keys" popup: the overview and the profile modal truncate the breakdown; this shows every key.
+const atModal = $("#alltags-modal");
+function openAllTags(agg, src) {
+  if (!atModal || !agg) return;
+  const { html, keyCount, valueCount } = tagBreakdownHtml(agg, { maxKeys: Infinity });
+  $("#alltags-title").textContent = src === "user" ? "All tag keys · contributor" : "All tag keys";
+  $("#alltags-sub").textContent = `${fmt.format(keyCount)} key${keyCount === 1 ? "" : "s"} · ${fmt.format(valueCount)} value${valueCount === 1 ? "" : "s"}`;
+  $("#alltags-body").innerHTML = html;
+  atModal.hidden = false;
+  atModal.classList.add("open");
+  document.body.style.overflow = "hidden";
+  refreshIcons(atModal);
+  $("#alltags-close")?.focus();
+  trapModalFocus(atModal);
+}
+function closeAllTags() {
+  if (!atModal) return;
+  atModal.hidden = true;
+  atModal.classList.remove("open");
+  // A profile modal may still be open underneath, keep the scroll lock until that one closes too.
+  if (!userModal.classList.contains("open")) document.body.style.overflow = "";
+  releaseModalFocus(atModal);
+}
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest?.(".tag-see-all");
+  if (!btn) return;
+  openAllTags(btn.dataset.seeAll === "user" ? state.modalTagAgg : state.overviewTagAgg, btn.dataset.seeAll);
+});
+$("#alltags-close")?.addEventListener("click", closeAllTags);
+atModal?.addEventListener("click", (e) => { if (e.target === atModal) closeAllTags(); });
+// Capture phase + stopPropagation so Esc closes only this popup, not a profile modal open beneath it.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && atModal?.classList.contains("open")) { e.stopPropagation(); closeAllTags(); }
+}, true);
 window.addEventListener("hashchange", () => { if (location.hash === "#methodology") openMethodology(); });
 if (location.hash === "#methodology") openMethodology();
 

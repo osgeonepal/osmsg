@@ -80,7 +80,7 @@
           <label class="exact-toggle" for="exact-match">
             <input type="checkbox" id="exact-match" />
             <span>Exact Match</span>
-            <span class="info-tip" tabindex="0" role="img"
+            <span class="info-tip info-tip-end" tabindex="0" role="img"
               aria-label="Exact Match returns only the hashtag you typed, not longer hashtags that start with it."
               data-tip="On: #hotosm matches only itself. Off: also matches #hotosm-project-11, …">
               <i data-lucide="info" class="ico-sm"></i>
@@ -115,6 +115,9 @@
       </div>
       <div id="recent-searches" class="recent-searches" aria-label="Recent searches" hidden></div>
       <div id="custom-range" class="custom-range" aria-label="Custom date range">
+        <button type="button" id="cr-close" class="cr-close" aria-label="Close date picker">
+          <i data-lucide="x" class="ico-sm"></i>
+        </button>
         <div class="cr-head">
           <div class="cr-head-label">Selected range (UTC)</div>
           <span class="cr-chip" id="cr-chip">
@@ -132,20 +135,20 @@
   <div class="windowbar">
     <div class="wb-item" id="wb-window"><i data-lucide="calendar-range" class="ico-sm"></i><span
         class="k">Window</span><span class="v" id="wb-window-text">…</span></div>
-    <div class="wb-item" id="last-updated" role="button" tabindex="0" title="Click to refresh" style="cursor:pointer"><i
+    <div class="wb-item clickable" id="last-updated" role="button" tabindex="0" title="Click to refresh"><i
         data-lucide="refresh-cw" class="ico-sm"></i><span class="k">Updated</span><span class="v"
         id="last-updated-text">never</span></div>
-    <div class="wb-right">
-      <span class="ov-breakdown-meta" id="ov-breakdown-meta"></span>
-      <button type="button" class="ov-toggle-btn" id="ov-toggle-btn" aria-expanded="false" aria-controls="ov-details">
-        <span id="ov-toggle-label">Show details</span><span class="ov-caret" aria-hidden="true">▾</span>
-      </button>
-    </div>
   </div>
   <main role="main">
     <section aria-label="Overview">
       <div id="overview">
         <div class="overview-strip" id="ov-strip-totals"></div>
+        <div class="ov-toggle-row">
+          <button type="button" class="ov-toggle-btn" id="ov-toggle-btn" aria-expanded="false" aria-controls="ov-details">
+            <span id="ov-toggle-label">Show details</span>
+            <span class="ov-toggle-end"><span class="ov-breakdown-meta" id="ov-breakdown-meta"></span><span class="ov-caret" aria-hidden="true">▾</span></span>
+          </button>
+        </div>
         <div id="ov-details" hidden>
           <div class="overview-strip" id="ov-strip"></div>
           <div class="ov-breakdown" id="ov-breakdown"></div>
@@ -229,6 +232,19 @@
             data-lucide="x"></i></button>
       </div>
       <div class="modal-body" id="user-modal-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="alltags-modal" role="dialog" aria-modal="true" aria-labelledby="alltags-title" hidden>
+    <div class="modal" role="document">
+      <div class="modal-head">
+        <div class="modal-title min-w-0 flex-1">
+          <div class="name" id="alltags-title">All tag keys</div>
+          <div class="sub" id="alltags-sub"></div>
+        </div>
+        <button type="button" class="modal-close" id="alltags-close" aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="alltags-body"></div>
     </div>
   </div>
 
