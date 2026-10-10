@@ -12,6 +12,9 @@ repo="${OSMSG_HISTORY_REPO:-kshitijrajsharma/osmsg-history}"
 # Keep ~a month beyond the frontier so global recent-window queries (<=30d) always find their
 # pre-frontier days in Postgres; anything older is served from published history.
 overlap_days="${OSMSG_PRUNE_OVERLAP_DAYS:-40}"
+# Hard cap so a hung prune cannot hold Postgres connections/locks and stall the live worker.
+prune_timeout="${OSMSG_PRUNE_TIMEOUT:-30m}"
+run_name="osmsg-prune-run"
 
 echo "[artifact-refresh] advancing ${artifact_host} from ${repo}"
 # Cap Xet download concurrency so its reconstruction buffers stay well within the container memory limit.
@@ -21,6 +24,18 @@ docker compose run --rm -e HF_XET_CLIENT_AC_MAX_DOWNLOAD_CONCURRENCY=4 -v "${art
 echo "[artifact-refresh] reloading the API onto the advanced frontier"
 docker compose restart api
 
-echo "[artifact-refresh] pruning Postgres, keeping ${overlap_days}d beyond the frontier"
-exec docker compose run --rm -v "${artifact_host}:/artifact" --entrypoint osmsg worker \
-  maintain prune-pg --psql-dsn "${dsn}" --history-url /artifact --overlap-days "${overlap_days}"
+echo "[artifact-refresh] pruning Postgres, keeping ${overlap_days}d beyond the frontier (timeout ${prune_timeout})"
+docker rm -f "${run_name}" >/dev/null 2>&1 || true
+set +e
+timeout --signal=TERM --kill-after=2m "${prune_timeout}" \
+  docker compose run --rm --name "${run_name}" -v "${artifact_host}:/artifact" --entrypoint osmsg worker \
+    maintain prune-pg --psql-dsn "${dsn}" --history-url /artifact --overlap-days "${overlap_days}"
+rc=$?
+set -e
+# Belt-and-suspenders: force-remove any lingering container so a hung prune can never keep holding
+# Postgres connections and stall the worker (the failure mode this guard exists to prevent).
+if [ "${rc}" -ne 0 ]; then
+  echo "[artifact-refresh] prune exited rc=${rc}; removing any lingering ${run_name} container"
+  docker rm -f "${run_name}" >/dev/null 2>&1 || true
+fi
+exit "${rc}"
