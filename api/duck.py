@@ -122,6 +122,7 @@ def _sources() -> Sources:
         recent_changesets_rel="pg.changesets",
         frontier=_frontier(),
         users_rel=f"read_parquet('{_USERS}')",
+        recent_users_rel="pg.users",
         pg_attach=_PG_ATTACH,
         cache_dir=_QUERY_CACHE_DIR,
     )

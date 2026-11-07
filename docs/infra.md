@@ -113,6 +113,14 @@ sudo systemctl daemon-reload && sudo systemctl enable --now osmsg-prune.timer
 Run it by hand with `sudo systemctl start osmsg-prune.service`. It keeps `--overlap-days` (default 2)
 beyond the frontier as a buffer for a month that stops slightly short of its boundary.
 
+## Postgres timeouts
+
+Timeouts are set through `PGOPTIONS`, which libpq applies to every connection DuckDB opens. The worker
+waits at most 120 s for each lock, and the prune and check jobs also cap each statement below their
+script timeout. An `options=` parameter in `OSMSG_PSQL_DSN` overrides `PGOPTIONS`. The `db` service sets
+`client_connection_check_interval`, so Postgres cancels a query, including a lock wait, within about
+10 s after its client exits.
+
 ## Operate
 
 ```bash

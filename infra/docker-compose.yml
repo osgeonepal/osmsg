@@ -17,6 +17,7 @@ services:
       -c maintenance_work_mem=512MB
       -c max_parallel_workers_per_gather=4
       -c max_parallel_workers=4
+      -c client_connection_check_interval=10s
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -67,6 +68,8 @@ services:
       OSMSG_DUCKDB_MEMORY_LIMIT: ${OSMSG_DUCKDB_MEMORY_LIMIT:-1GB}
       OSMSG_DUCKDB_THREADS: ${OSMSG_DUCKDB_THREADS:-2}
       OSMSG_DUCKDB_TEMP_DIR: ${OSMSG_DUCKDB_TEMP_DIR:-/var/cache/osmsg/duckdb-tmp}
+      # libpq applies this to every connection DuckDB opens, including its pooled ones.
+      PGOPTIONS: -c lock_timeout=120s
     volumes:
       - osmsg-data:/var/lib/osmsg
       - osmsg-cache:/var/cache/osmsg

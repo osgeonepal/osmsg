@@ -23,6 +23,9 @@ Under `hf://datasets/kshitijrajsharma/osmsg-history`:
 | `rollup/hashtag_changeset` | one row per (hashtag, changeset), full breakdown + native `tags` | any hashtag query, exact |
 | `rollup/users` | uid to username | display names, joined at read time |
 
+Contributors whose first edit falls after the frontier are named from the live Postgres `users` table
+until the next publish adds them to `rollup/users`.
+
 `manifest.json` records `min_month` and `max_month`. The frontier is the first instant after
 `max_month`; history is everything before it.
 

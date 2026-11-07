@@ -28,7 +28,7 @@ echo "[artifact-refresh] pruning Postgres, keeping ${overlap_days}d beyond the f
 docker rm -f "${run_name}" >/dev/null 2>&1 || true
 set +e
 timeout --signal=TERM --kill-after=2m "${prune_timeout}" \
-  docker compose run --rm --name "${run_name}" -v "${artifact_host}:/artifact" --entrypoint osmsg worker \
+  docker compose run --rm --name "${run_name}" -e PGOPTIONS="-c lock_timeout=120s -c statement_timeout=25min" -v "${artifact_host}:/artifact" --entrypoint osmsg worker \
     maintain prune-pg --psql-dsn "${dsn}" --history-url /artifact --overlap-days "${overlap_days}"
 rc=$?
 set -e

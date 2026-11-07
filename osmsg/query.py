@@ -23,7 +23,8 @@ from .stats import COUNT_COLS, map_changes_expr, map_changes_sum, prefix_upper_b
 @dataclass(frozen=True)
 class Sources:
     """Where per-changeset rows and usernames live: `history_rel` (published rollup) serves before
-    `frontier`; the recent tail comes live from `recent_stats_rel`/`recent_changesets_rel`."""
+    `frontier`; the recent tail comes live from `recent_stats_rel`/`recent_changesets_rel`. Names resolve
+    from `users_rel`, then `recent_users_rel`."""
 
     history_rel: str
     recent_stats_rel: str
@@ -39,6 +40,20 @@ class Sources:
     # When set, count endpoints read this counts-only TTL-refreshed parquet of the matched tail instead of
     # re-scanning Postgres; tag/per-user paths still use `pg_attach` (no tags in the slice), so both coexist.
     recent_tail_rel: str | None = None
+    # Usernames of contributors who first appear after the frontier, absent from `users_rel` until the next publish.
+    recent_users_rel: str | None = None
+
+
+def _name_joins(s: Sources) -> str:
+    joins = f"LEFT JOIN {s.users_rel} u USING (uid)"
+    if s.recent_users_rel:
+        joins += f" LEFT JOIN {s.recent_users_rel} ru USING (uid)"
+    return joins
+
+
+def _name_expr(s: Sources) -> str:
+    recent = "ru.username, " if s.recent_users_rel else ""
+    return f"COALESCE(u.username, {recent}'user ' || c.uid)"
 
 
 def _rows(result) -> list[dict[str, Any]]:
@@ -567,9 +582,9 @@ def leaderboard(
         c AS (
             SELECT uid, SUM(changesets) AS changesets, {_SUM_AS} FROM pu GROUP BY uid
         )
-        SELECT c.uid, COALESCE(u.username, 'user ' || c.uid) AS name, c.changesets, {_COLS},
+        SELECT c.uid, {_name_expr(s)} AS name, c.changesets, {_COLS},
                {map_changes_expr("c")} AS map_changes
-        FROM c LEFT JOIN {s.users_rel} u USING (uid){search_pred}
+        FROM c {_name_joins(s)}{search_pred}
         """,
         [*rp, *search_params],
     )
@@ -1066,9 +1081,9 @@ def global_leaderboard(
     con.execute(
         f"""
         CREATE OR REPLACE TEMP TABLE _g_lb AS
-        SELECT c.uid, COALESCE(u.username, 'user ' || c.uid) AS name, c.changesets, {_COLS},
+        SELECT c.uid, {_name_expr(s)} AS name, c.changesets, {_COLS},
                {map_changes_expr("c")} AS map_changes
-        FROM {rel} c LEFT JOIN {s.users_rel} u USING (uid){search_pred}
+        FROM {rel} c {_name_joins(s)}{search_pred}
         """,
         [*params, *search_params],
     )

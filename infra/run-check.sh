@@ -6,4 +6,6 @@ set -euo pipefail
 dsn="${OSMSG_PSQL_DSN:-postgresql://osmsg:osmsg@db:5432/osmsg}"
 
 echo "[check] backfilling stub changesets"
-exec docker exec infra-worker-1 osmsg maintain check --psql-dsn "${dsn}" --fix
+# timeout runs inside the container: systemd stopping the exec client alone leaves the process running.
+exec docker exec -e PGOPTIONS="-c lock_timeout=120s -c statement_timeout=20min" infra-worker-1 \
+  timeout --kill-after=1m 25m osmsg maintain check --psql-dsn "${dsn}" --fix

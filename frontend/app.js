@@ -1684,7 +1684,10 @@ function updateLastUpdated() {
   const txt = $("#last-updated-text");
   const chip = $("#last-updated");
   const h = state.health;
-  if (h?.last_ts) {
+  if (h?.unavailable) {
+    txt.textContent = h.detail.startsWith("stale") ? "Updates delayed" : "Server unavailable";
+    if (chip) chip.title = h.detail;
+  } else if (h?.last_ts) {
     const t = dtfClock.format(h.last_ts);
     txt.innerHTML = `Server ${ago(h.last_ts)} \u00b7 <time datetime="${h.last_ts.toISOString()}">${t}</time>`;
     const lines = [
@@ -1710,6 +1713,13 @@ async function fetchHealth() {
       headers: { accept: "application/json" },
       mode: "cors",
     });
+    // /health answers 503 when the live worker falls behind or the database is down; detail says which.
+    if (res.status === 503) {
+      const j = await res.json().catch(() => ({}));
+      state.health = { unavailable: true, detail: j.detail ?? "server unavailable" };
+      updateLastUpdated();
+      return;
+    }
     if (!res.ok) return;
     const j = await res.json();
     state.health = {

@@ -85,6 +85,22 @@ def test_leaderboard_page_size_and_sort(con, sources):
     assert found["total"] == 1 and found["items"][0]["name"] == "alice"
 
 
+def test_leaderboard_names_recent_only_contributor_from_recent_users(con, sources):
+    counts = ", ".join(["1"] + ["0"] * (len(COUNT_COLS) - 1))
+    con.execute(f"INSERT INTO cs_stats VALUES (4, 0, 3, {counts}, [])")
+    con.execute("INSERT INTO csets VALUES (4, 3, 'iD', '2026-07-06', ['#hotosm-project-3'])")
+    con.execute(
+        "CREATE TABLE recent_users AS SELECT * FROM (VALUES (3, 'carol'), (1, 'alice_renamed')) t(uid, username)"
+    )
+    with_recent = dataclasses.replace(sources, recent_users_rel="recent_users")
+    names = {r["uid"]: r["name"] for r in query.leaderboard(con, "hotosm", with_recent)["items"]}
+    assert names == {1: "alice", 2: "bob", 3: "carol"}
+    window = {"start": dt.datetime(2026, 7, 1, tzinfo=dt.UTC), "end": dt.datetime(2026, 8, 1, tzinfo=dt.UTC)}
+    global_names = {r["uid"]: r["name"] for r in query.global_leaderboard(con, with_recent, **window)["items"]}
+    assert global_names[3] == "carol"
+    assert query.leaderboard(con, "hotosm", with_recent, q="carol")["total"] == 1
+
+
 def test_leaderboard_search_escapes_like_wildcards(con, sources):
     # `_` and `%` are LIKE metacharacters: unescaped, `a_ice` matched `alice` and a bare `%` returned
     # every contributor. They must match literally.
