@@ -47,11 +47,8 @@ def bump_manifest(repo: str, new_month: str) -> dict:
     """Advance the published manifest's max_month to new_month (forward only) and re-upload it."""
     url = f"https://huggingface.co/datasets/{repo}/resolve/main/manifest.json"
     resp = requests.get(url, timeout=15)
-    manifest = (
-        resp.json()
-        if resp.status_code == 200
-        else {"schema_version": SCHEMA_VERSION, "min_month": new_month, "max_month": new_month}
-    )
+    resp.raise_for_status()
+    manifest = resp.json()
     if new_month <= str(manifest["max_month"]):
         return manifest
     manifest["max_month"] = new_month

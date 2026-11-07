@@ -183,3 +183,31 @@ def test_isolate_temp_dir_noop_without_base(monkeypatch):
 
     duck._isolate_temp_dir(_Con())
     assert calls == []
+
+
+def test_warm_releases_key_when_connect_fails(monkeypatch):
+    def refuse():
+        raise duckdb.IOException("too many clients already")
+
+    monkeypatch.setattr(duck, "_connect", refuse)
+    key = ("summary", "'hotosm'", False)
+    duck._warm_inflight.clear()
+    duck._warm_inflight.add(key)
+    duck._warm(_fake_query("summary"), "hotosm", {}, key)
+    assert key not in duck._warm_inflight
+    duck._warm_inflight.add(key)
+    duck._warm_all_time_job("hotosm", key, False)
+    assert key not in duck._warm_inflight
+
+
+def test_warm_logs_and_releases_key_when_manifest_unavailable(monkeypatch):
+    def no_manifest():
+        raise RuntimeError("history manifest unavailable")
+
+    monkeypatch.setattr(duck, "_connect", lambda: _FakeCon())
+    monkeypatch.setattr(duck, "_sources", no_manifest)
+    key = ("summary", "'hotosm'", False)
+    duck._warm_inflight.clear()
+    duck._warm_inflight.add(key)
+    duck._warm(_fake_query("summary"), "hotosm", {}, key)
+    assert key not in duck._warm_inflight

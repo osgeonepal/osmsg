@@ -23,9 +23,15 @@ def resolve_url(value: str) -> str:
     return value.rstrip("/")
 
 
+def _get_text(url: str) -> str:
+    response = session.get(url)
+    response.raise_for_status()
+    return response.text
+
+
 def seq_to_timestamp(state_url: str) -> datetime:
     """Parse a replication state file and return its timestamp (UTC)."""
-    txt = session.get(state_url).text
+    txt = _get_text(state_url)
     start = txt.find("timestamp=") + len("timestamp=")
     end = txt.find("\n", start)
     raw = txt[start:end].replace("\\", "")
@@ -121,7 +127,7 @@ class ChangesetReplication:
         self.pad_min = pad_hours * 60
 
     def _state(self) -> tuple[int, datetime]:
-        txt = session.get(self.base + "state.yaml").text
+        txt = _get_text(self.base + "state.yaml")
         seq = int(txt.split("sequence: ")[1])
         last_run = datetime.strptime(txt.split("last_run: ")[1][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
         return seq, last_run
@@ -142,7 +148,7 @@ class ChangesetReplication:
         return max(1, min(wanted, cur_seq))
 
     def sequence_to_timestamp(self, seq: int) -> datetime:
-        txt = session.get(self.state_url(seq)).text
+        txt = _get_text(self.state_url(seq))
         return datetime.strptime(txt.split("last_run: ")[1][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
 
     def download_urls(

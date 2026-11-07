@@ -158,13 +158,12 @@ _warm_lock = threading.Lock()
 
 
 def _warm(fn, hashtag, kwargs, key) -> None:
-    con = _connect()
     try:
-        fn(con, hashtag, _sources(), **kwargs)
-    except duckdb.Error as e:
+        with contextlib.closing(_connect()) as con:
+            fn(con, hashtag, _sources(), **kwargs)
+    except (duckdb.Error, RuntimeError) as e:
         _log.warning("cache warm rerun of %s for %r failed: %s", fn.__name__, hashtag, e)
     finally:
-        con.close()
         with _warm_lock:
             _warm_inflight.discard(key)
 
@@ -183,13 +182,12 @@ def _enqueue_warm(fn, hashtag, kwargs) -> None:
 
 
 def _warm_all_time_job(hashtag, key, exact) -> None:
-    con = _connect()
     try:
-        query.warm_all_time(con, hashtag, _sources(), exact=exact)
-    except duckdb.Error as e:
+        with contextlib.closing(_connect()) as con:
+            query.warm_all_time(con, hashtag, _sources(), exact=exact)
+    except (duckdb.Error, RuntimeError) as e:
         _log.warning("all-time warm for %r failed: %s", hashtag, e)
     finally:
-        con.close()
         with _warm_lock:
             _warm_inflight.discard(key)
 
@@ -292,7 +290,7 @@ async def leaderboard(
         end=end,
     )
     if start is None and end is None:
-        _maybe_warm_all_time(hashtag, exact)
+        await asyncio.to_thread(_maybe_warm_all_time, hashtag, exact)
     return res
 
 
@@ -341,7 +339,7 @@ async def hashtags(
 ):
     res = await asyncio.to_thread(_run, query.hashtags, hashtag, exact=exact, limit=limit, start=start, end=end)
     if start is None and end is None:
-        _maybe_warm_all_time(hashtag, exact)
+        await asyncio.to_thread(_maybe_warm_all_time, hashtag, exact)
     return res
 
 

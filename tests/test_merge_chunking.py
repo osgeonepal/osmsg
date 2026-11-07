@@ -5,6 +5,7 @@ upsert (newest non-NULL wins) and dedup preserved."""
 import datetime as dt
 
 import duckdb
+import pytest
 
 from osmsg.db import ingest
 from osmsg.db.ingest import _id_ranges, flush_rows_to_parquet, merge_parquet_files
@@ -90,3 +91,13 @@ def test_chunked_merge_equals_single_and_upserts_metadata(tmp_path, monkeypatch)
     assert chunked == single  # chunking must not change the result
     assert [r[0] for r in chunked] == [100, 5_000, 90_000]  # one row per changeset (deduped)
     assert all(r[1] == "iD" and r[2] == ["#x"] and r[4] for r in chunked)  # metadata upserted, not lost
+
+
+def test_merge_raises_on_unreadable_shard(tmp_path):
+    pdir = tmp_path / "parq"
+    _shard(pdir, [Changeset(changeset_id=1, uid=1)], batch=1)
+    (pdir / "temp_2_changesets_1.parquet").write_bytes(b"truncated by a crashed worker")
+    con = duckdb.connect(str(tmp_path / "store.duckdb"))
+    create_tables(con)
+    with pytest.raises(duckdb.Error):
+        merge_parquet_files(con, pdir, cleanup=False)

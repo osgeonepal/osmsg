@@ -5,7 +5,9 @@ with prior state skip it."""
 import datetime as dt
 
 import pytest
+import requests
 
+from osmsg import replication as _repl_mod
 from osmsg.replication import ChangesetReplication
 
 
@@ -86,7 +88,6 @@ def test_resume_seq_skips_backward_pad(monkeypatch):
 @pytest.fixture
 def changefile_repl(monkeypatch):
     """Offline ReplicationServer stub; 1 sequence == 1 minute."""
-    from osmsg import replication as _repl_mod
 
     cur_seq = 5_000_000
     cur_ts = dt.datetime(2026, 5, 7, 22, 0, tzinfo=dt.UTC)
@@ -285,3 +286,18 @@ def test_changeset_seq_clamps_before_replication(monkeypatch):
     monkeypatch.setattr(cr, "_state", lambda: (7_000_000, dt.datetime(2026, 6, 25, tzinfo=dt.UTC)))
     assert cr.timestamp_to_sequence(dt.datetime(2005, 1, 1, tzinfo=dt.UTC)) == 1
     assert cr.timestamp_to_sequence(dt.datetime(2026, 6, 24, tzinfo=dt.UTC)) <= 7_000_000
+
+
+def test_state_fetch_raises_http_error_on_error_status(monkeypatch):
+    class _NotFound:
+        status_code = 404
+        text = "<html>not found</html>"
+
+        def raise_for_status(self):
+            raise requests.HTTPError("404")
+
+    monkeypatch.setattr(_repl_mod, "session", type("S", (), {"get": staticmethod(lambda url: _NotFound())}))
+    with pytest.raises(requests.HTTPError):
+        _repl_mod.seq_to_timestamp("https://example.invalid/state.txt")
+    with pytest.raises(requests.HTTPError):
+        _repl_mod.ChangesetReplication("https://example.invalid/")._state()

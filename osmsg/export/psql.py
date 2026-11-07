@@ -23,6 +23,10 @@ _BULK_INDEXES = [
         "idx_changeset_hashtag_lookup",
         'CREATE INDEX idx_changeset_hashtag_lookup ON changeset_hashtag USING BTREE (hashtag COLLATE "C", created_at)',
     ),
+    (
+        "idx_changeset_hashtag_changeset_id",
+        "CREATE INDEX idx_changeset_hashtag_changeset_id ON changeset_hashtag USING BTREE (changeset_id)",
+    ),
 ]
 _BULK_FKS = [
     ("changesets", "changesets_uid_fkey", "FOREIGN KEY (uid) REFERENCES users (uid)"),

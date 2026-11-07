@@ -40,7 +40,7 @@ services:
       DATABASE_URL: postgresql://osmsg:osmsg@db:5432/osmsg
       OSMSG_QUERY_CACHE_DIR: ${OSMSG_QUERY_CACHE_DIR:-}
       OSMSG_PG_WORK_MEM: ${OSMSG_PG_WORK_MEM:-96MB}
-      OSMSG_GLOBAL_MAX_DAYS: ${OSMSG_GLOBAL_MAX_DAYS:-7}
+      OSMSG_GLOBAL_MAX_DAYS: ${OSMSG_GLOBAL_MAX_DAYS:-30}
     depends_on:
       db:
         condition: service_healthy

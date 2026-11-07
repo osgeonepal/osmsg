@@ -2,7 +2,6 @@
 
 import math
 import shutil
-import sys
 from pathlib import Path
 
 import duckdb
@@ -22,17 +21,6 @@ _TAG_PA_TYPE = pa.list_(
         ]
     )
 )
-
-
-def _quarantine_corrupt(parquet_dir: Path) -> None:
-    """Rename unreadable parquet shards out of the way so the bulk read doesn't abort."""
-    for shard in parquet_dir.glob("temp_*.parquet"):
-        try:
-            pq.read_metadata(shard)
-        except Exception as exc:  # noqa: BLE001
-            corrupt = shard.with_suffix(".corrupt")
-            shard.rename(corrupt)
-            print(f"warning: skipping unreadable shard {shard.name}: {exc}", file=sys.stderr)
 
 
 USERS_SCHEMA = pa.schema(
@@ -138,8 +126,6 @@ def merge_parquet_files(conn: duckdb.DuckDBPyConnection, parquet_dir: Path, *, c
     parquet_dir = Path(parquet_dir)
     if not parquet_dir.exists():
         return
-
-    _quarantine_corrupt(parquet_dir)
 
     def pattern(name: str) -> str:
         # read_parquet() takes a literal, escape so quoted paths can't break out.

@@ -1,6 +1,7 @@
 """Prune Postgres of rows now served from published history, keeping it to the uncovered live tail."""
 
 import datetime as dt
+import math
 
 from .db.pg import connect_postgres, pg_execute
 from .exceptions import OsmsgError
@@ -8,12 +9,12 @@ from .history import fetch_manifest
 from .ui import info
 
 DEFAULT_OVERLAP = dt.timedelta(days=2)
+PRUNE_BATCH_SIZE = 50_000
 
 
-def prune_pg(dsn: str, cutoff: dt.datetime) -> tuple[int, int]:
-    """Delete changesets and their changeset_stats older than cutoff; child rows first for the FK. The
-    DSN is interpolated into ATTACH, so it must be trusted. Counting and deleting use separate
-    connections because a read pins the connection read-only, which would block the native deletes."""
+def prune_pg(dsn: str, cutoff: dt.datetime, *, batch_size: int = PRUNE_BATCH_SIZE) -> tuple[int, int]:
+    """Delete changesets older than cutoff with their changeset_stats, batch_size per committed statement.
+    The DSN is interpolated into ATTACH, so it must be trusted."""
     iso = cutoff.astimezone(dt.UTC).isoformat()
     older = f"created_at < TIMESTAMPTZ '{iso}'"
 
@@ -29,11 +30,14 @@ def prune_pg(dsn: str, cutoff: dt.datetime) -> tuple[int, int]:
 
     if cs_n:
         writer = connect_postgres(dsn)
-        pg_execute(
-            writer,
-            f"DELETE FROM changeset_stats s USING changesets c WHERE s.changeset_id = c.changeset_id AND c.{older}",
-        )
-        pg_execute(writer, f"DELETE FROM changesets WHERE {older}")
+        # Each batch commits alone, so a statement timeout loses one batch, not the whole prune.
+        for _ in range(math.ceil(cs_n / batch_size)):
+            pg_execute(
+                writer,
+                f"WITH batch AS (SELECT changeset_id FROM changesets WHERE {older} LIMIT {int(batch_size)}), "
+                "stats AS (DELETE FROM changeset_stats s USING batch b WHERE s.changeset_id = b.changeset_id) "
+                "DELETE FROM changesets c USING batch b WHERE c.changeset_id = b.changeset_id",
+            )
         writer.close()
     return stats_n, cs_n
 

@@ -111,7 +111,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now osmsg-prune.timer
 ```
 
 Run it by hand with `sudo systemctl start osmsg-prune.service`. It keeps `--overlap-days` (default 2)
-beyond the frontier as a buffer for a month that stops slightly short of its boundary.
+beyond the frontier as a buffer for a month that stops slightly short of its boundary. It deletes in
+batches of 50,000 changesets, each committed separately, so a run stopped by its timeout keeps the batches
+it finished and the next run continues from there.
 
 ## Postgres timeouts
 
