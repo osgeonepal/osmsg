@@ -78,8 +78,7 @@ async def home() -> Redirect:
 
 def _root_handlers() -> list:
     """Serve the built frontend at / when FRONTEND_DIST is a directory, else redirect to the API docs.
-    Explicit API routes (/health, /api/*, /docs) take precedence over the static catch-all; html_mode
-    serves index.html."""
+    Explicit API routes (/health, /api/*, /docs) take precedence over the static catch-all."""
     if FRONTEND_DIST and Path(FRONTEND_DIST).is_dir():
         return [create_static_files_router(path="/", directories=[FRONTEND_DIST], html_mode=True)]
     return [home]
@@ -87,8 +86,7 @@ def _root_handlers() -> list:
 
 @get("/health")
 async def health() -> HealthResponse:
-    # A health check must reflect the database it depends on: a connection/query failure is reported as
-    # unavailable (503) rather than a false "ok". An empty state table (DB up, no rows yet) stays "ok".
+    # A database failure reports 503, never a false "ok"; an empty state table (DB up, no rows) stays "ok".
     try:
         state = await fetch_state()
     except (OSError, asyncpg.PostgresError) as exc:

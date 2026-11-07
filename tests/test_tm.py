@@ -132,6 +132,6 @@ def test_enrich_attaches_totals_for_users_in_project(fake_tm_api):
     by_name = {r["name"]: r for r in out}
     assert by_name["alice"]["tasks_mapped"] == 12
     assert by_name["alice"]["tm_mapping_level"] == "ADVANCED"
-    # bob is in the row set but not in the API response → zeros
+    # bob is in the row set but not in the API response, so he gets zero tasks and no mapping level
     assert by_name["bob"]["tasks_mapped"] == 0
     assert by_name["bob"]["tm_mapping_level"] is None

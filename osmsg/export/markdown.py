@@ -1,18 +1,9 @@
 """Markdown table + summary.md exporter."""
 
-import json
 from pathlib import Path
 from typing import Any
 
-
-def _stringify(v: Any) -> str:
-    if v is None:
-        return ""
-    if isinstance(v, list):
-        return ",".join(str(x) for x in v)
-    if isinstance(v, dict):
-        return json.dumps(v)
-    return str(v)
+from .csv import _stringify
 
 
 def table_markdown(rows: list[dict[str, Any]], output_path: Path, headers: list[str] | None = None) -> Path:
@@ -28,7 +19,7 @@ def table_markdown(rows: list[dict[str, Any]], output_path: Path, headers: list[
 
 
 def _human(n: int) -> str:
-    """Compact human number: 1234 -> 1.2K, 1500000 -> 1.5M."""
+    """Compact human number, such as 1.2K for 1234 or 1.5M for 1500000."""
     n = int(n)
     for unit, scale in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
         if abs(n) >= scale:

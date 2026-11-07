@@ -7,10 +7,9 @@ from litestar import Controller, Router, get
 from litestar.exceptions import HTTPException
 
 from osmsg.query import GLOBAL_MAX_DAYS
-from osmsg.query import LEADERBOARD_SORTS as _LEADERBOARD_SORTS
 
 from .. import duck
-from ._common import to_utc
+from ._common import to_utc, validate_page
 
 _MAX = timedelta(days=GLOBAL_MAX_DAYS)
 _WINDOWS = {
@@ -66,12 +65,7 @@ class GlobalController(Controller):
         q: str | None = None,
         detail: bool = False,
     ) -> dict[str, Any]:
-        if sort not in _LEADERBOARD_SORTS:
-            raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(_LEADERBOARD_SORTS)}")
-        if order not in ("asc", "desc"):
-            raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
-        if page < 1:
-            raise HTTPException(status_code=400, detail="page must be >= 1")
+        validate_page(sort, order, page)
         s, e = _resolve(window, start, end)
         return await duck.global_leaderboard(
             start=s, end=e, page=page, page_size=page_size, sort=sort, order=order, q=q, detail=detail

@@ -1,6 +1,7 @@
+from ..stats import TAG_STRUCT_DDL
+
 # No FKs: DuckDB rejects UPDATE on FK-referenced LIST/GEOMETRY columns, which would block changeset upgrades.
-# `tags` is the native tag breakdown (osmsg.stats.TAG_STRUCT_DDL); kept in sync with that constant.
-DUCKDB_SCHEMA = """
+DUCKDB_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS users (
     uid      BIGINT PRIMARY KEY,
     username VARCHAR NOT NULL
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS changeset_stats (
     rels_deleted   INTEGER DEFAULT 0,
     poi_created    INTEGER DEFAULT 0,
     poi_modified   INTEGER DEFAULT 0,
-    tags           STRUCT(k VARCHAR, v VARCHAR, c BIGINT, m BIGINT, l DOUBLE)[],
+    tags           {TAG_STRUCT_DDL}[],
     PRIMARY KEY (seq_id, changeset_id)
 );
 CREATE INDEX IF NOT EXISTS idx_changeset_stats_uid ON changeset_stats(uid);

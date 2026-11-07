@@ -1,80 +1,10 @@
-// Both cards are plain HTML lists, no charting library.
+// Editors and related-hashtags cards, rendered as plain HTML lists.
 
 function _ensureChartsSection() {
   if (document.getElementById("osmsg-charts-row")) return;
 
   const main = document.querySelector("main[role='main']");
   if (!main) return;
-
-  const style = document.createElement("style");
-  style.textContent = `
-    #osmsg-charts-section { margin-top: 0; }
-    #osmsg-charts-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      align-items: stretch;
-    }
-    .osmsg-chart-card {
-      background: var(--surface);
-      border: 1px solid var(--bd);
-      border-radius: 16px;
-      box-shadow: var(--shadow-s1);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-    }
-    .osmsg-chart-card[hidden] { display: none; }
-    .osmsg-chart-title {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: var(--muted);
-      font-weight: 600;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .osmsg-bar-legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px 14px;
-      margin-bottom: 14px;
-    }
-    .osmsg-bar-legend-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 11.5px;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-    .osmsg-bar-legend-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 3px;
-      flex-shrink: 0;
-    }
-    .osmsg-chart-canvas-wrap {
-      position: relative;
-      width: 100%;
-      flex: 1;
-    }
-    .osmsg-hashtag-stat-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      color: var(--muted);
-      margin-bottom: 8px;
-      padding: 0 2px;
-    }
-    @media (max-width: 720px) {
-      #osmsg-charts-row { grid-template-columns: 1fr; }
-    }
-  `;
-  document.head.appendChild(style);
 
   const section = document.createElement("section");
   section.setAttribute("aria-label", "Charts");
@@ -93,7 +23,7 @@ function _ensureChartsSection() {
           Editors
         </div>
         <div id="editor-bar-legend" class="osmsg-bar-legend"></div>
-        <div class="osmsg-chart-canvas-wrap" role="img" aria-label="Editors ranked by contributors"></div>
+        <div class="osmsg-chart-list-wrap" role="img" aria-label="Editors ranked by contributors"></div>
       </div>
 
       <div id="hashtag-chart-card" class="osmsg-chart-card" hidden>
@@ -110,9 +40,8 @@ function _ensureChartsSection() {
         </div>
         <div class="osmsg-hashtag-stat-row">
           <span id="hashtag-stat-total"></span>
-          <span id="hashtag-stat-count"></span>
         </div>
-        <div class="osmsg-chart-canvas-wrap" id="hashtag-canvas-wrap" role="img"
+        <div class="osmsg-chart-list-wrap" id="hashtag-list-wrap" role="img"
           aria-label="Hashtags ranked by number of contributors"></div>
       </div>
 
@@ -121,16 +50,14 @@ function _ensureChartsSection() {
   main.appendChild(section);
 }
 
-
-
 const _PER_PAGE = 5;
 let _edPage = 0, _edLen = -1;
-const _edExpanded = new Set(); // editor families expanded to show their versions
+const _edExpanded = new Set();
 const editorGroup = (s) =>
   (typeof editorFamily === "function" && editorFamily(s)) || String(s || "Unknown").split(/[/\s]/)[0] || "Unknown";
 let _htPage = 0, _htLen = -1;
 
-// A spinner shown in both chart cards while their data loads.
+// Skeleton rows in both cards while their data loads.
 function setChartsLoading() {
   _ensureChartsSection();
   const rows = Array.from({ length: 5 }, (_, i) => `
@@ -139,14 +66,13 @@ function setChartsLoading() {
       <div class="ht-bar"><div class="skeleton" style="width:${72 - i * 12}%;height:100%;border-radius:inherit"></div></div>
     </div>`).join("");
   const ec = document.getElementById("editor-chart-card");
-  const ew = ec && ec.querySelector(".osmsg-chart-canvas-wrap");
+  const ew = ec && ec.querySelector(".osmsg-chart-list-wrap");
   const el = document.getElementById("editor-bar-legend");
   if (ec && ew) { ec.hidden = false; if (el) el.innerHTML = ""; ew.style.height = "auto"; ew.innerHTML = rows; }
   const hc = document.getElementById("hashtag-chart-card");
-  const hw = document.getElementById("hashtag-canvas-wrap");
+  const hw = document.getElementById("hashtag-list-wrap");
   const ht = document.getElementById("hashtag-stat-total");
-  const hn = document.getElementById("hashtag-stat-count");
-  if (hc && hw) { hc.hidden = false; if (ht) ht.textContent = ""; if (hn) hn.textContent = ""; hw.style.height = "auto"; hw.innerHTML = rows; }
+  if (hc && hw) { hc.hidden = false; if (ht) ht.textContent = ""; hw.style.height = "auto"; hw.innerHTML = rows; }
 }
 
 // Render a paginated list (rows + a prev/next footer) into `wrap`; wires the footer buttons to onPage.
@@ -171,11 +97,11 @@ function _pagedList(wrap, items, page, rowFn, gmax, onPage) {
   return p;
 }
 
-function renderEditorBarChart() {
+function renderEditors() {
   _ensureChartsSection();
   const card = document.getElementById("editor-chart-card");
   const legendEl = document.getElementById("editor-bar-legend");
-  const wrap = card ? card.querySelector(".osmsg-chart-canvas-wrap") : null;
+  const wrap = card ? card.querySelector(".osmsg-chart-list-wrap") : null;
   if (!card || !legendEl || !wrap) return;
 
   const src = (state.editorStats && state.editorStats.all) || [];
@@ -196,13 +122,12 @@ function renderEditorBarChart() {
   const all = [...groups.values()].sort((a, b) => valueOf(b) - valueOf(a));
   if (all.length !== _edLen) { _edPage = 0; _edLen = all.length; }
 
-  const fmtVal = (n) => fmt.format(n);
   const gmax = Math.max(...all.map(valueOf), 1);
   legendEl.innerHTML = `<span class="osmsg-sub">Contributors per editor</span>`;
 
   const subRow = (v, max) => `
     <div class="ht-row ht-sub">
-      <div class="ht-head"><span class="ht-tag" title="${escapeHtml(v.editor)}">${escapeHtml(v.editor)}</span><span class="ht-val">${fmtVal(valueOf(v))}</span></div>
+      <div class="ht-head"><span class="ht-tag" title="${escapeHtml(v.editor)}">${escapeHtml(v.editor)}</span><span class="ht-val">${fmt.format(valueOf(v))}</span></div>
       <div class="ht-bar"><div class="ht-fill" style="width:${Math.max(3, (valueOf(v) / max) * 100)}%"></div></div>
     </div>`;
   const rowFn = (r, max) => {
@@ -217,12 +142,12 @@ function renderEditorBarChart() {
       <div class="ht-row${expandable ? " ht-expandable" : ""}"${expandable ? ` data-egroup="${escapeHtml(r.editor)}"` : ""}>
         <div class="ht-head">
           <span class="ht-tag" title="${escapeHtml(r.editor)} · ${fmt.format(r.users)} contributors · ${fmt.format(r.changes)} map changes">${caret}${escapeHtml(r.editor)}${count}</span>
-          <span class="ht-val">${fmtVal(valueOf(r))}</span>
+          <span class="ht-val">${fmt.format(valueOf(r))}</span>
         </div>
         <div class="ht-bar"><div class="ht-fill" style="width:${Math.max(3, (valueOf(r) / max) * 100)}%"></div></div>
       </div>${subs}`;
   };
-  _edPage = _pagedList(wrap, all, _edPage, rowFn, gmax, (np) => { _edPage = np; renderEditorBarChart(); });
+  _edPage = _pagedList(wrap, all, _edPage, rowFn, gmax, (np) => { _edPage = np; renderEditors(); });
   wrap.querySelectorAll(".ht-expandable").forEach((el) => {
     const head = el.querySelector(".ht-head");
     if (!head) return;
@@ -230,17 +155,16 @@ function renderEditorBarChart() {
     head.onclick = () => {
       const g = el.dataset.egroup;
       if (_edExpanded.has(g)) _edExpanded.delete(g); else _edExpanded.add(g);
-      renderEditorBarChart();
+      renderEditors();
     };
   });
 }
 
-function renderHashtagPieChart() {
+function renderRelatedHashtags() {
   _ensureChartsSection();
   const card = document.getElementById("hashtag-chart-card");
-  const wrapEl = document.getElementById("hashtag-canvas-wrap");
+  const wrapEl = document.getElementById("hashtag-list-wrap");
   const totalEl = document.getElementById("hashtag-stat-total");
-  const countEl = document.getElementById("hashtag-stat-count");
   if (!card || !wrapEl) return;
 
   const src = (state.hashtagTrends || [])
@@ -254,22 +178,19 @@ function renderHashtagPieChart() {
   const trends = src.slice().sort((a, b) => valueOf(b) - valueOf(a));
   if (trends.length !== _htLen) { _htPage = 0; _htLen = trends.length; }
 
-  const fmtVal = (n) => fmt.format(n);
   const gmax = Math.max(...trends.map(valueOf), 1);
   if (totalEl) totalEl.textContent = "Contributors per hashtag";
-  if (countEl) countEl.innerHTML = "";
   const rowFn = (e, max) => `
     <div class="ht-row">
       <div class="ht-head">
         <button type="button" class="ht-tag ht-tag-add" data-addtag="${escapeHtml(String(e.tag).replace(/^#/, ""))}"
           title="Add ${e.tag} to the search">${e.tag}</button>
-        <span class="ht-val">${fmtVal(valueOf(e))}</span>
+        <span class="ht-val">${fmt.format(valueOf(e))}</span>
       </div>
       <div class="ht-bar"><div class="ht-fill" style="width:${Math.max(3, (valueOf(e) / max) * 100)}%"></div></div>
     </div>`;
-  _htPage = _pagedList(wrapEl, trends, _htPage, rowFn, gmax, (np) => { _htPage = np; renderHashtagPieChart(); });
-  // Clicking a related hashtag adds it to the query (handler lives in app.js). Delegated + idempotent so
-  // it survives paging re-renders.
+  _htPage = _pagedList(wrapEl, trends, _htPage, rowFn, gmax, (np) => { _htPage = np; renderRelatedHashtags(); });
+  // Delegated and reassigned on each render so it survives paging; the handler lives in app.js.
   wrapEl.onclick = (ev) => {
     const el = ev.target.closest("[data-addtag]");
     if (el && typeof addRelatedHashtag === "function") addRelatedHashtag(el.dataset.addtag);

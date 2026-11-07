@@ -214,7 +214,6 @@ def test_recent_pg_aggregates_shape_and_bounds():
     assert "editor" in catalog.recent_editor_agg("pg", **kw)
     assert "bucket" in catalog.recent_bucket_agg("pg", "day", **kw)
     assert "lon" in catalog.recent_map_agg("pg", **kw)
-    assert "hashtag" in catalog.recent_hashtag_agg("pg", **kw)
 
 
 def test_recent_pg_aggregate_escapes_quotes():

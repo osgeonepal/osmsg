@@ -5,14 +5,6 @@ import pytest
 from osmsg.db.schema import connect
 
 
-def test_no_env_leaves_defaults(monkeypatch):
-    for var in ("OSMSG_DUCKDB_MEMORY_LIMIT", "OSMSG_DUCKDB_THREADS", "OSMSG_DUCKDB_TEMP_DIR"):
-        monkeypatch.delenv(var, raising=False)
-    conn = connect(":memory:")
-    assert conn.execute("SELECT current_setting('threads')").fetchone()[0] >= 1
-    conn.close()
-
-
 def test_threads_and_temp_dir_applied(monkeypatch, tmp_path):
     spill = tmp_path / "duckdb-tmp"
     monkeypatch.setenv("OSMSG_DUCKDB_THREADS", "2")

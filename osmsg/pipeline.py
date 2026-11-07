@@ -1,4 +1,4 @@
-"""End-to-end orchestration: download -> process -> ingest -> query -> export."""
+"""End-to-end orchestration: download, parse, ingest, query and export."""
 
 import concurrent.futures
 import copy
@@ -29,6 +29,7 @@ from .export import summary_markdown, table_markdown, to_csv, to_json, to_parque
 from .fetch import download_osm_file
 from .geofabrik import country_geometry, country_update_url
 from .history import (
+    DEFAULT_HISTORY_URL,
     RESUME_SAFETY,
     RemoteFilters,
     WindowSplit,
@@ -94,7 +95,7 @@ class RunConfig:
     changeset_pad_hours: int = ChangesetReplication.DEFAULT_PAD_HOURS
     max_update_window: dt.timedelta | None = None
     history_mode: str = "auto"  # auto | off
-    history_url: str = "hf://datasets/kshitijrajsharma/osmsg-history"
+    history_url: str = DEFAULT_HISTORY_URL
     insert: bool = False
     seed_only: bool = False
     osh_file: str | None = None
@@ -108,8 +109,7 @@ def _resolve_country_urls(countries: list[str]) -> list[str]:
 
 
 def _normalize_urls(cfg: RunConfig) -> None:
-    # Explicit --url wins over --country's default Geofabrik URL; --country still
-    # contributes the boundary geometry filter downstream.
+    # Explicit --url wins over --country's Geofabrik URL; --country still supplies the boundary filter.
     if cfg.countries and not cfg.url_explicit:
         cfg.urls = _resolve_country_urls(cfg.countries)
         return
@@ -158,14 +158,12 @@ def _canonical_hashtags(hashtags: list[str]) -> list[str]:
 
 
 def _needs_changefile_changeset_filter(cfg: RunConfig) -> bool:
-    # With any metadata-side filter on, ChangefileHandler must drop edits whose changeset_id isn't in the
-    # allowlist, else stub rows for global changesets pollute the changesets table.
+    # A metadata-side filter must drop edits outside the changeset allowlist, else stub rows pollute changesets.
     return bool(cfg.hashtags or cfg.boundary or cfg.countries)
 
 
 def _resolve_valid_changesets(conn, cfg: RunConfig) -> set[int] | None:
-    # None keeps everything; a set drops edits to changesets not in it (the set ChangesetHandler already
-    # filtered into the changesets table earlier in the run).
+    # None keeps everything; otherwise only the changesets ChangesetHandler already kept in the table.
     if not _needs_changefile_changeset_filter(cfg):
         return None
     return set(list_changesets(conn))
@@ -227,9 +225,8 @@ def _resolve_url_starts(conn, cfg: RunConfig) -> dict[str, tuple[dt.datetime, in
 
 
 def _seed_history_resume(conn, cfg: RunConfig) -> None:
-    """On --update against a store loaded from the published history but with no resume state yet,
-    seed each source's state at the published frontier so the first update resumes there instead of
-    the default bootstrap window. Makes "load the history, then --update" just work."""
+    """On --update against a store loaded from the published history with no resume state, seed each
+    source's state at the published frontier so the first update resumes there."""
     if not cfg.update or cfg.history_mode != "auto":
         return
     history_rows = conn.execute("SELECT count(*) FROM changeset_stats WHERE seq_id = 0").fetchone()
@@ -528,9 +525,8 @@ def _finalize(
 
 
 def _ensure_credentials(cfg: RunConfig) -> str | None:
-    """Resolve OSM credentials (RunConfig fields, then OSM_USERNAME/OSM_PASSWORD, then a TTY prompt) and
-    exchange them for a Geofabrik OAuth cookie; raises CredentialsRequiredError if a geofabrik URL needs
-    credentials none can be obtained headless."""
+    """Exchange OSM credentials (RunConfig, then OSM_USERNAME/OSM_PASSWORD, then a TTY prompt) for a Geofabrik
+    OAuth cookie; raises CredentialsRequiredError when a geofabrik URL needs them and none are available."""
     if not any("geofabrik" in u.lower() for u in cfg.urls):
         return None
 
@@ -621,8 +617,7 @@ def _stream_download_process(
         progress_bar(total, unit=label, description=description) as advance,
         concurrent.futures.ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as downloaders,
         concurrent.futures.ThreadPoolExecutor(max_workers=1) as prefetcher,
-        # spawn, not fork: this pool lives alongside the download threads, and forking a
-        # multi-threaded process risks inheriting a held lock and deadlocking.
+        # spawn: forking a process that runs download threads can inherit a held lock and deadlock.
         concurrent.futures.ProcessPoolExecutor(
             max_workers=workers,
             mp_context=multiprocessing.get_context("spawn"),
@@ -725,14 +720,12 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             "--update: resuming each source from its own state row "
             f"(earliest: {cfg.start_date.astimezone(UTC).isoformat()})"
         )
-        # Bound each run to a fixed window so a large backlog catches up over successive ticks (each
-        # committing its slice) instead of one pass; granularity was already picked from the full gap.
+        # Cap each run so a large backlog catches up over committed ticks; granularity came from the full gap.
         capped_end = _cap_update_window(cfg.start_date, cfg.end_date, cfg.max_update_window)
         if capped_end < cfg.end_date:
             cfg.end_date = capped_end
             info(f"--update: capping this run to {cfg.max_update_window}; remainder resumes next tick.")
 
-    # _resolve_url_starts guarantees start_date is set (or raised); narrow for ty.
     assert cfg.start_date is not None
     if cfg.start_date >= cfg.end_date:
         raise OsmsgError("start_date >= end_date, nothing to do.")
@@ -740,8 +733,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     span = cfg.end_date - cfg.start_date
     info(f"Range: {cfg.start_date.astimezone(UTC).isoformat()} → {cfg.end_date.astimezone(UTC).isoformat()} ({span})")
     span_hours = span.total_seconds() / 3600
-    # When auto-switch was suppressed (--url explicit, --update, --country, multi-URL), a long
-    # span on minute replication still floods the network. Hint the user.
+    # Without auto-switch (--url, --update, --country, multi-URL) a long minute span floods the network.
     if span_hours >= 72 and any(u == SHORTCUTS["minute"] for u in cfg.urls):
         warn(
             f"Range spans {span_hours:.0f}h on minute replication "
@@ -793,7 +785,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
     max_workers = cfg.workers or _cpu_count()
     info(f"Workers: {max_workers}")
 
-    # None == no filter active; empty set == filter matched nothing (drop everything).
+    # None: no filter; empty set: the filter matched nothing, so drop everything.
     valid_changesets: set[int] | None = None
     start_seq: int | None = None
     end_seq: int | None = None
@@ -907,8 +899,7 @@ def run(cfg: RunConfig) -> dict[str, Any]:
             extra_iterable=seq_ids,
         )
         dbmod.merge_parquet_files(conn, cf_dir, cleanup=True)
-        # state.last_ts is the seq_ts of last_seq so the next tick's lower-bound filter
-        # aligns with the seq boundary.
+        # state.last_ts is last_seq's timestamp so the next tick's lower bound aligns with the seq boundary.
         state_last_ts = changefile_seq_timestamp(url, src_end_seq)
         upsert_state(
             conn,

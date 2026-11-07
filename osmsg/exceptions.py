@@ -19,6 +19,9 @@ class CredentialsRequiredError(OsmsgError):
 class GeofabrikAuthError(OsmsgError):
     """The OAuth 2.0 cookie handshake against OSM/Geofabrik failed."""
 
+    def __str__(self) -> str:
+        return f"Geofabrik authentication failed: {super().__str__()}"
+
 
 class NoDataFoundError(Exception):
     """Empty range, info condition, not a failure (CLI exits 0). Not an OsmsgError on purpose."""

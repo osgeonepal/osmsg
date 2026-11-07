@@ -45,10 +45,10 @@ def _fake_download(latest, manifest_dict):
 
 def _patch_manifests(monkeypatch, artifact_dir, remote_frontier, local_frontier):
     manifests = {
-        "hf://datasets/test/repo": Manifest(1, _month_start(2005, 4), remote_frontier),
+        "hf://datasets/test/repo": Manifest(_month_start(2005, 4), remote_frontier),
     }
     if local_frontier is not None:
-        manifests[str(artifact_dir)] = Manifest(1, _month_start(2005, 4), local_frontier)
+        manifests[str(artifact_dir)] = Manifest(_month_start(2005, 4), local_frontier)
     monkeypatch.setattr(refresh, "fetch_manifest", lambda url, timeout=15: manifests.get(url))
 
 

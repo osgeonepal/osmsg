@@ -75,7 +75,7 @@ def test_build_month_rollups(tmp_path):
             (3, 20, {"nodes_modified": 4}, None),
         ],
         changesets=[
-            (1, 10, "alice", ["#hotosm-project-1", "#test"]),
+            (1, 10, "alice", ["#hotosm-project-1", "#Test"]),
             (2, 10, "alice", ["#hotosm-project-2"]),
             (3, 20, "bob", None),
         ],
@@ -89,6 +89,9 @@ def test_build_month_rollups(tmp_path):
     assert hc[("#hotosm-project-1", 1)]["nodes_created"] == 5 and hc[("#hotosm-project-1", 1)]["uid"] == 10
     assert hc[("#hotosm-project-2", 2)]["nodes_created"] == 3
     assert hc[("#hotosm-project-1", 1)]["tags"] == [{"k": "building", "v": "yes", "c": 2, "m": 0, "l": None}]
+
+    file_order = [r["hashtag"] for r in _read(tmp_path, "rollup/hashtag_changeset/data.parquet")]
+    assert file_order == sorted(file_order)
 
     users = {r["uid"]: r["username"] for r in _read(tmp_path, "rollup/users/data.parquet")}
     assert users == {10: "alice", 20: "bob"}

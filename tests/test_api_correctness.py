@@ -2,19 +2,20 @@
 
 Each case uses a window entirely inside published history (before the frontier), where the rollup is
 immutable, so the numbers are reproducible run to run; a drift beyond `OSMSG_API_NUM_TOLERANCE` (default
-1%) flags a real regression. Runs against a live API (`OSMSG_API_BASE`); `network`-marked. Add mega-
-hashtag pins here once they return under the latency ceiling.
+1%) flags a real regression. Runs against the live API named by `OSMSG_API_BASE` and skips when it is
+unset; `network`-marked. Mega-hashtag pins belong here once they return under the latency ceiling.
 """
 
 import os
 
 import pytest
 
-pytestmark = pytest.mark.network
+_BASE = os.environ.get("OSMSG_API_BASE", "").rstrip("/")
+
+pytestmark = [pytest.mark.network, pytest.mark.skipif(not _BASE, reason="OSMSG_API_BASE is not set")]
 
 requests = pytest.importorskip("requests")
 
-_BASE = os.environ.get("OSMSG_API_BASE", "https://api.osmsg.osgeonepal.org").rstrip("/")
 _TOLERANCE = float(os.environ.get("OSMSG_API_NUM_TOLERANCE", "0.01"))
 _TIMEOUT = 60
 

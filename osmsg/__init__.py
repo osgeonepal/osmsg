@@ -1,26 +1,4 @@
-"""OpenStreetMap stats generator. Parquet-first, OAuth 2.0, UTC-only.
-
-Library usage::
-
-    from osmsg import RunConfig, run, OsmsgError
-
-    cfg = RunConfig(
-        name="nepal",
-        countries=["nepal"],
-        start_date=datetime(2026, 4, 25, tzinfo=UTC),
-        end_date=datetime(2026, 4, 26, tzinfo=UTC),
-        formats=["parquet"],
-        osm_username="...",
-        osm_password="...",
-    )
-    try:
-        result = run(cfg)
-    except OsmsgError as exc:
-        ...
-    print(result["files"]["parquet"])      # -> 'nepal.parquet'
-
-CLI entry point: ``osmsg`` (defined in ``osmsg.cli``).
-"""
+"""OpenStreetMap stats generator: per-user edit statistics from OSM replication and history."""
 
 from .__version__ import __version__
 from .db import (

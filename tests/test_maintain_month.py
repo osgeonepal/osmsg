@@ -42,3 +42,28 @@ def test_empty_month_raises(tmp_path):
     con.close()
     with pytest.raises(OsmsgError):
         verify_month_complete(db, 2026, 5)
+
+
+def test_upload_sends_partitions_as_folders_and_rollups_as_files(tmp_path, monkeypatch):
+    from osmsg.maintain import month
+
+    for dataset in ("changefiles", "changesets"):
+        (tmp_path / dataset / "year=2026" / "month=10").mkdir(parents=True)
+    for rollup in ("rollup/hashtag_changeset/data.parquet", "rollup/users/data.parquet"):
+        (tmp_path / rollup).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rollup).write_bytes(b"x")
+    calls = []
+    monkeypatch.setattr(month.huggingface_hub, "create_repo", lambda repo, **kw: calls.append(("repo", repo, kw)))
+    monkeypatch.setattr(month.huggingface_hub, "upload_folder", lambda **kw: calls.append(("folder", kw)))
+    monkeypatch.setattr(month.huggingface_hub, "upload_file", lambda **kw: calls.append(("file", kw)))
+
+    month.upload("org/history", tmp_path, 2026, 10)
+
+    assert calls[0] == ("repo", "org/history", {"repo_type": "dataset", "exist_ok": True})
+    sent = {(kind, kw["path_in_repo"], kw["repo_id"], kw["repo_type"]) for kind, kw in calls[1:]}
+    assert sent == {
+        ("folder", "changefiles/year=2026/month=10", "org/history", "dataset"),
+        ("folder", "changesets/year=2026/month=10", "org/history", "dataset"),
+        ("file", "rollup/hashtag_changeset/data.parquet", "org/history", "dataset"),
+        ("file", "rollup/users/data.parquet", "org/history", "dataset"),
+    }

@@ -17,7 +17,7 @@ CHANGESETS_REPLICATION = f"{PLANET_BASE}/changesets/"
 
 
 def resolve_url(value: str) -> str:
-    """`minute|hour|day` -> planet URL, else passthrough (after stripping trailing /)."""
+    """Expand `minute|hour|day` to the planet URL; pass any other URL through without its trailing /."""
     if value in SHORTCUTS:
         return SHORTCUTS[value]
     return value.rstrip("/")
@@ -86,15 +86,13 @@ def changefile_download_urls(
         end_seq = repl.timestamp_to_sequence(end_date)
         if end_seq is None:
             raise OsmsgError(f"Could not resolve end_date {end_date}")
-        # +1 only when end_seq's state_ts is strictly before end_date, since that is the
-        # only diff that can contain edits in (state_ts(end_seq), end_date].
+        # +1 only when end_seq's state_ts precedes end_date: that diff alone can hold edits up to end_date.
         end_seq_ts = seq_to_timestamp(repl.get_state_url(end_seq))
         if end_seq_ts < end_date:
             end_seq += 1
         last_seq = min(end_seq, server_seq)
 
-    # Hold cf one diff behind cs when cs is the slower stream, so every (seq, cs) row
-    # written has a parent in `changesets` already.
+    # Hold cf one diff behind a slower cs stream so every (seq, cs) row already has a parent in `changesets`.
     if resume_seq is not None and cs_ts is not None:
         target_ts = end_date if end_date else server_ts
         if target_ts > cs_ts:
@@ -118,8 +116,7 @@ def changefile_download_urls(
 class ChangesetReplication:
     """Planet changeset replication URL helper."""
 
-    # OSM caps changeset open time at 24h, so 24 is the maximum useful pad. Default 1h
-    # keeps first-run bootstraps cheap; see README "Configuration" for when to raise it.
+    # OSM caps changeset open time at 24h, so 24 is the maximum useful pad; 1h keeps bootstraps cheap.
     DEFAULT_PAD_HOURS = 1
 
     def __init__(self, base_url: str = CHANGESETS_REPLICATION, *, pad_hours: int = DEFAULT_PAD_HOURS) -> None:

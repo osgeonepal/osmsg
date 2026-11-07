@@ -5,12 +5,13 @@ import calendar
 import datetime as dt
 import os
 import pathlib
-import subprocess
 
 import duckdb
+import huggingface_hub
 
 from ..db.schema import _apply_runtime_pragmas
 from ..exceptions import OsmsgError
+from ..history import _next_month
 from .parquet import GEOM_COLS, MORTON_MACROS, write_partitions
 
 UTC = dt.UTC
@@ -19,8 +20,7 @@ COMPLETENESS_TOLERANCE = dt.timedelta(hours=1)
 
 def _month_bounds(year: int, month: int) -> tuple[dt.datetime, dt.datetime]:
     start = dt.datetime(year, month, 1, tzinfo=UTC)
-    end = dt.datetime(year + 1, 1, 1, tzinfo=UTC) if month == 12 else dt.datetime(year, month + 1, 1, tzinfo=UTC)
-    return start, end
+    return start, _next_month(start)
 
 
 def ensure_complete_month(year: int, month: int) -> None:
@@ -113,7 +113,8 @@ def _count(con: duckdb.DuckDBPyConnection, table: str) -> int:
 
 
 def upload(repo: str, out: pathlib.Path, year: int, month: int) -> None:
-    """Upload the month's raw partitions and rollups to the HuggingFace dataset repo via the hf CLI."""
+    """Upload the month's raw partitions and rollups to the HuggingFace dataset repo."""
+    huggingface_hub.create_repo(repo, repo_type="dataset", exist_ok=True)
     for dataset in ("changefiles", "changesets"):
         local = out / dataset / f"year={year}" / f"month={month}"
         _hf_upload(repo, local, f"{dataset}/year={year}/month={month}")
@@ -125,7 +126,7 @@ def upload(repo: str, out: pathlib.Path, year: int, month: int) -> None:
 
 
 def _hf_upload(repo: str, local: pathlib.Path, remote: str) -> None:
-    subprocess.run(
-        ["uvx", "--from", "huggingface_hub", "hf", "upload", repo, str(local), remote, "--repo-type", "dataset"],
-        check=True,
-    )
+    if local.is_dir():
+        huggingface_hub.upload_folder(repo_id=repo, folder_path=local, path_in_repo=remote, repo_type="dataset")
+    else:
+        huggingface_hub.upload_file(path_or_fileobj=local, path_in_repo=remote, repo_id=repo, repo_type="dataset")

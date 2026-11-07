@@ -72,10 +72,6 @@ class ElementStat(BaseModel):
     m: int = 0
     d: int = 0
 
-    @property
-    def total(self) -> int:
-        return self.c + self.m + self.d
-
     def add(self, action: Action) -> None:
         if action is Action.CREATE:
             self.c += 1
@@ -100,10 +96,6 @@ class ChangesetStats(BaseModel):
     poi_modified: int = 0
 
     tag_stats: dict[str, dict[str, TagValueStat]] = Field(default_factory=dict)
-
-    @property
-    def map_changes(self) -> int:
-        return self.nodes.total + self.ways.total + self.rels.total
 
     def tags_list(self) -> list[dict[str, Any]]:
         """Flat native tag rows ({k,v,c,m,l}) for the shard's LIST<STRUCT> column, so ingest is a copy."""

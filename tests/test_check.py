@@ -40,9 +40,7 @@ def test_fetch_closed_skips_open_and_extracts_metadata(monkeypatch):
     assert out[2]["min_lon"] == 1.0
 
 
-def test_sql_literal_helpers_escape():
-    assert check.sql_literal(None) == "NULL"
-    assert check.sql_literal("a'b") == "'a''b'"
+def test_sql_number_and_array_helpers():
     assert check._sql_number(None) == "NULL"
     assert check._sql_number(1.5) == "1.5"
     assert check._sql_array([]) == "ARRAY[]::text[]"

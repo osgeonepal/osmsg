@@ -656,4 +656,4 @@ def test_metadata_only_changeset_fills_stub_without_fk_abort(fresh_db):
 
     assert landed is not None and landed[0] is not None  # metadata-only changeset reached PG
     assert user_ok == 1  # its user was carried even without an edit row this tick
-    assert hashtag_ok == 1  # and its #msf hashtag reached the index (the stub is no longer stranded)
+    assert hashtag_ok == 1  # and its #msf hashtag reached the index

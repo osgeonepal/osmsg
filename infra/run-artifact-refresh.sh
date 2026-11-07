@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Advance the local history artifact to the newest published month, then drop the Postgres rows that
-# history now covers. The API is bounced between the two steps so it serves the advanced frontier before
-# the prune runs; otherwise a stale cached frontier would still expect the pruned rows from Postgres.
+# Advance the local history artifact to the newest published month, then prune the Postgres rows it covers.
+# The API restarts in between so a stale cached frontier never expects the pruned rows from Postgres.
 set -euo pipefail
 
 cd /opt/osmsg/infra
@@ -25,17 +24,15 @@ echo "[artifact-refresh] reloading the API onto the advanced frontier"
 docker compose restart api
 
 echo "[artifact-refresh] pruning Postgres, keeping ${overlap_days}d beyond the frontier (timeout ${prune_timeout})"
-docker rm -f "${run_name}" >/dev/null 2>&1 || true
+if [ -n "$(docker ps -aq --filter "name=^${run_name}$")" ]; then docker rm -f "${run_name}"; fi
 set +e
 timeout --signal=TERM --kill-after=2m "${prune_timeout}" \
   docker compose run --rm --name "${run_name}" -e PGOPTIONS="-c lock_timeout=120s -c statement_timeout=25min" -v "${artifact_host}:/artifact" --entrypoint osmsg worker \
     maintain prune-pg --psql-dsn "${dsn}" --history-url /artifact --overlap-days "${overlap_days}"
 rc=$?
 set -e
-# Belt-and-suspenders: force-remove any lingering container so a hung prune can never keep holding
-# Postgres connections and stall the worker (the failure mode this guard exists to prevent).
 if [ "${rc}" -ne 0 ]; then
   echo "[artifact-refresh] prune exited rc=${rc}; removing any lingering ${run_name} container"
-  docker rm -f "${run_name}" >/dev/null 2>&1 || true
+  if [ -n "$(docker ps -aq --filter "name=^${run_name}$")" ]; then docker rm -f "${run_name}"; fi
 fi
 exit "${rc}"

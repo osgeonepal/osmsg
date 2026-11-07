@@ -8,8 +8,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-# Native shard column for the per-changeset tag breakdown, matching the store's
-# STRUCT(k VARCHAR, v VARCHAR, c BIGINT, m BIGINT, l DOUBLE)[] so ingest is a direct copy.
+# Matches changeset_stats.tags so ingest is a direct copy.
 _TAG_PA_TYPE = pa.list_(
     pa.struct(
         [
@@ -99,16 +98,14 @@ def _sql_escape(value: str) -> str:
     return value.replace("'", "''")
 
 
-# Target changesets per merge chunk: a per-tick delta is a single chunk; a month-sized merge splits
-# into many so each INSERT/UPDATE stays memory-bounded instead of rewriting all rows at once.
+# Rows per merge chunk: a month-sized merge splits so each statement stays memory-bounded.
 _MERGE_CHUNK_ROWS = 200_000
 _MERGE_CHUNK_CAP = 64
 
 
 def _id_ranges(conn: duckdb.DuckDBPyConnection, shard_glob: str) -> list[tuple[int, int]]:
-    """Adaptive [low, high) changeset_id ranges over the shards: one range covering everything for a small
-    merge, several for a large one. Splitting by changeset_id is exact for DISTINCT ON (changeset_id), a
-    changeset's rows share one id and land in exactly one range."""
+    """Adaptive [low, high) changeset_id ranges over the shards, one for a small merge; exact for
+    DISTINCT ON (changeset_id) since a changeset's rows all land in one range."""
     row = conn.execute(
         f"SELECT count(*), min(changeset_id), max(changeset_id) FROM read_parquet('{shard_glob}')"
     ).fetchone()

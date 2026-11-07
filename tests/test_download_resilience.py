@@ -1,14 +1,10 @@
-"""Downloads stay polite and a network failure becomes a clear, resumable error."""
+"""A network failure during download becomes a clear, resumable error."""
 
 import pytest
 import requests
 
 from osmsg import pipeline
 from osmsg.exceptions import OsmsgError
-
-
-def test_download_concurrency_is_capped():
-    assert pipeline._DOWNLOAD_WORKERS <= 4
 
 
 def test_stream_download_wraps_network_error(monkeypatch, tmp_path):

@@ -11,11 +11,10 @@ workbox.core.clientsClaim();
 // App shell (HTML + JS): always take the current version when online, fall back to cache offline.
 registerRoute(
     ({ request }) => request.mode === "navigate" || ["script", "style", "worker"].includes(request.destination),
-    new NetworkFirst({ cacheName: "osmsg-shell-v5", networkTimeoutSeconds: 5 })
+    new NetworkFirst({ cacheName: "osmsg-shell-v6", networkTimeoutSeconds: 5 })
 );
 
-// OSMSG API: network-first with no premature timeout, so a ~75s mega-hashtag query can finish; let the
-// request finish; only fall back to cache when the network genuinely fails (offline).
+// Network-first with no timeout so long queries finish; cache only as an offline fallback.
 registerRoute(
     ({ url }) => url.pathname.startsWith("/api/"),
     new NetworkFirst({
@@ -38,7 +37,7 @@ registerRoute(
 );
 
 // Evict every cache except the current ones, so a stale app.js can never be served after a version bump.
-const CURRENT_CACHES = new Set(["osmsg-shell-v5", "osmsg-api-v2", "osmsg-cdn"]);
+const CURRENT_CACHES = new Set(["osmsg-shell-v6", "osmsg-api-v2", "osmsg-cdn"]);
 self.addEventListener("activate", (event) => {
     event.waitUntil(
         caches.keys().then((keys) =>

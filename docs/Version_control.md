@@ -19,11 +19,12 @@ Example `fix: fixed the bug in issue #123`
 
 ### Install
 
-`pip install commitizen`
+Commitizen is a dev dependency of the project, so `just setup` (or `uv sync`) installs it. Run it with
+`uv run cz`.
 
-### Commiting Code
+### Committing code
 
-- Instead of `git commit` use `cz commit` and follow the prompts.
+- Commit with `uv run cz commit` and follow the prompts.
 - You can select the type of commit, plus additional metadata.
 
 ### Bumping a Version
@@ -39,8 +40,7 @@ When you decide it is time to create a new version:
 2. Bump the version and push:
 
    ```bash
-   pip install commitizen # (if not installed)
-   cz bump
+   uv run cz bump
    git push
    ```
 
@@ -52,8 +52,8 @@ This will:
 - Automatically update CHANGELOG.md with all changes since the last version.
 - Create a tag matching the version number.
 
-> Note: in a repo where you have direct push access, you would simply update on main and push.
-> As we are using Git-Flow, a PR is necessary.
+> Note: in a repo where you have direct push access, you would update on main and push.
+> This repo follows Git-Flow, so the bump goes through a PR.
 
 ## Creating Releases
 
@@ -64,4 +64,4 @@ This will:
 4. Set the `Release title` to v`x.x.x`, replacing with your version number.
 5. Add a description if possible, then release.
 
-This should trigger the PyPi publishing workflow, and your version will be available on [PyPi](https://pypi.org/project/osmsg/).
+This should trigger the PyPI publishing workflow, and your version will be available on [PyPI](https://pypi.org/project/osmsg/).

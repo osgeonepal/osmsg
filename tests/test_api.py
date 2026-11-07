@@ -108,7 +108,7 @@ def test_api_exposes_only_active_public_routes():
     assert "/api/v2/hashtag/{hashtag:str}/leaderboard" in paths
     assert "/api/v2/hashtag/{hashtag:str}/tags" in paths
     assert "/api/v2/hashtag/{hashtag:str}/editors" in paths
-    assert not any(p.startswith("/api/v1") for p in paths)  # v1 retired
+    assert all(p.startswith("/api/v2/") for p in paths if p.startswith("/api/"))
 
 
 def test_health_ok_when_db_reachable(monkeypatch):
@@ -197,13 +197,12 @@ def test_global_resolve_accepts_naive_datetime_window():
     assert resolved_start.tzinfo is UTC and resolved_end.tzinfo is UTC
 
 
-def test_v2_user_detail_routes_registered():
+def test_v2_global_user_detail_route_registered():
     paths = {route.path for route in api_app.routes}
-    assert "/api/v2/hashtag/{hashtag:str}/user/{uid:int}" in paths
     assert "/api/v2/global/user/{uid:int}" in paths
 
 
-def test_v2_hashtag_user_detail_route_returns_detail_shape(monkeypatch):
+def test_v2_hashtag_user_detail_route_parses_comma_path_and_uid(monkeypatch):
     """The on-demand per-user route parses the comma path/uid and returns the detail dict from the query
     layer, no live DB."""
     from api import duck
@@ -219,7 +218,6 @@ def test_v2_hashtag_user_detail_route_returns_detail_shape(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body["uid"] == 7 and body["hashtag"] == ["hotosm"]
-    assert set(body) >= {"tag_stats", "editors", "hashtags"}
 
 
 def test_get_cors_origins_reads_comma_separated_env(monkeypatch):

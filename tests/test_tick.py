@@ -45,8 +45,7 @@ def _seed_state(out_dir: Path, name: str, source_url: str) -> None:
 
 def test_explicit_url_with_country_resolves_state_under_explicit_url(tmp_path, monkeypatch, captured_cmd, clean_env):
     """--country + explicit --url: the state row is keyed by the explicit URL, not the country's geofabrik
-    URL (previously never found there, re-bootstrapping and wiping the DuckDB every tick).
-    """
+    URL, so each tick finds its resume state instead of re-bootstrapping."""
     name = "nepal"
     _seed_state(tmp_path, name, SHORTCUTS["minute"])
 
@@ -163,7 +162,7 @@ def test_tick_lifecycle_cold_then_warm(tmp_path, monkeypatch, clean_env):
 
 
 def test_tick_skips_when_previous_tick_holds_lock(tmp_path, monkeypatch, clean_env):
-    """Concurrent-tick guard: flock is held → exit 0 immediately, never invoke subprocess."""
+    """Concurrent-tick guard: while the flock is held, exit 0 immediately and never invoke subprocess."""
     name = "nepal"
     monkeypatch.setenv("OSMSG_EXTRA_ARGS", f"--name {name} --output-dir {tmp_path}")
 

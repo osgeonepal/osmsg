@@ -21,7 +21,7 @@ class _Response:
 
 def _stub(monkeypatch, response):
     uploads = []
-    monkeypatch.setattr(manifest.requests, "get", lambda url, timeout: response)
+    monkeypatch.setattr(manifest.session, "get", lambda url: response)
     monkeypatch.setattr(manifest, "_upload", lambda repo, path: uploads.append(path.read_text()))
     return uploads
 

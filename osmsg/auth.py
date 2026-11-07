@@ -1,7 +1,5 @@
-"""OAuth 2.0 cookie client for Geofabrik internal download server.
-
-Mirrors https://github.com/geofabrik/sendfile_osm_oauth_protector
-"""
+"""OAuth 2.0 cookie client for the Geofabrik internal download server.
+Mirrors https://github.com/geofabrik/sendfile_osm_oauth_protector"""
 
 import urllib.parse
 from html.parser import HTMLParser

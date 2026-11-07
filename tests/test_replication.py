@@ -216,9 +216,8 @@ def test_changefile_forward_pad_clamps_at_server_head(changefile_repl):
     assert last_seq == cur_seq
 
 
-# cs_ts sync gate: keeps changefile from outpacing changeset replication on --update ticks, else a tick
-# fetches changefile diff N+1 before changeset diff N+1 is published, orphaning (seq, cs) rows whose
-# parent changeset isn't in `changesets` yet.
+# cs_ts sync gate: on --update the changefile stream never passes the changeset stream, so no (seq, cs) row
+# lands before its parent changeset is in `changesets`.
 
 
 def _resume_seq_call(changefile_repl, **kwargs):

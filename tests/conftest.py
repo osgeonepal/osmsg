@@ -46,11 +46,6 @@ def osc_factory(tmp_path: Path):
 
 
 @pytest.fixture
-def utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.UTC)
-
-
-@pytest.fixture
 def fresh_db(tmp_path: Path) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(str(tmp_path / "test.duckdb"))
     create_tables(conn)

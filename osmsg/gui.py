@@ -5,6 +5,7 @@ import os
 import queue
 import sys
 import threading
+import traceback
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -243,8 +244,9 @@ class App:
             self.events.put(("done", "No data found for that range."))
         except OsmsgError as exc:
             self.events.put(("done", f"Error: {exc}"))
-        except Exception as exc:
-            self.events.put(("done", f"Unexpected error: {type(exc).__name__}: {exc}"))
+        except Exception:
+            # The run thread must always report back, or the window stays busy with no message.
+            self.events.put(("done", f"Unexpected error:\n{traceback.format_exc()}"))
         finally:
             sys.stdout, sys.stderr = saved
 

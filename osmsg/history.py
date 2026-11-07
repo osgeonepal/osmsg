@@ -1,6 +1,5 @@
-"""Hybrid-auto historical read: serve a window's covered months from the published parquet, leaving
-the recent tail to the live diff path. Remote rows are tagged seq_id=0 and read by direct partition
-path (a glob would make DuckDB list every partition over the HF API)."""
+"""Serve a window's covered months from the published parquet as seq_id=0 rows, leaving the recent tail to the
+live diff path. Partitions are read by direct path since a glob lists every partition over the HF API."""
 
 import datetime as dt
 import json
@@ -17,14 +16,14 @@ from .ui import info, progress_bar, warn
 
 UTC = dt.UTC
 SCHEMA_VERSION = 1
-DEFAULT_HISTORY_URL = "hf://datasets/kshitijrajsharma/osmsg-history"
+DEFAULT_HISTORY_REPO = "kshitijrajsharma/osmsg-history"
+DEFAULT_HISTORY_URL = f"hf://datasets/{DEFAULT_HISTORY_REPO}"
 HISTORY_SEQ_ID = 0
 MONTH_READ_ATTEMPTS = 6
 
 
 @dataclass
 class Manifest:
-    schema_version: int
     min_month: dt.datetime
     frontier: dt.datetime
 
@@ -97,7 +96,6 @@ def fetch_manifest(history_url: str, timeout: int = 15) -> Manifest | None:
         return None
     try:
         return Manifest(
-            schema_version=version,
             min_month=_month_start(payload["min_month"]),
             frontier=_next_month(_month_start(payload["max_month"])),
         )

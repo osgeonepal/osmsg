@@ -1,11 +1,5 @@
 """Convert a planet .osh history plus a changeset dump into the changefiles/changesets parquet
-datasets, out of core via osmsg's own DuckDB tables.
-
-Way length is reconstructed by a DuckDB join: the streaming pass emits each node's creation coords and
-each open-way-create's node refs, then length is a parallel join (node coords + haversine) in the
-aggregation stage. With no planet-sized node-location index, streaming has no cross-part dependency and
-runs blob-split parallel across `parts`.
-"""
+datasets, out of core via osmsg's own DuckDB tables."""
 
 import datetime as dt
 import multiprocessing
@@ -56,8 +50,7 @@ TAG_SCHEMA = pa.schema(
         ("action", pa.int8()),
         ("tag_key", pa.string()),
         ("tag_value", pa.string()),
-        # Join key to way_len for way tags; NULL for node/relation tags. Length is derived in the length
-        # join and attached only to a way's create row.
+        # Join key to way_len for way tags (NULL otherwise); length attaches only to a way's create row.
         ("way_id", pa.int64()),
     ]
 )
@@ -154,8 +147,7 @@ class ElementStreamer(osmium.SimpleHandler):
 
     def way(self, w) -> None:
         self._emit(w, "way", way_id=w.id)
-        # Node refs for an open way create in the window; length is joined per way_id downstream. Closed
-        # ways (first ref == last ref) are areas and get no length, matching the live worker.
+        # Node refs of an open way create; closed ways are areas and get no length, matching the live worker.
         if self._in_window(w.timestamp) and w.version == 1 and not w.deleted:
             nodes = w.nodes
             if len(nodes) >= 2 and nodes[0].ref != nodes[-1].ref:
@@ -222,10 +214,8 @@ def stream_changesets(dump: str, start: dt.datetime, end: dt.datetime, work: pat
 
 
 def _build_way_len(con: duckdb.DuckDBPyConnection, work: pathlib.Path) -> None:
-    """way_len(way_id, length): haversine over each open-way-create's node coords (node first-version).
-    A way is dropped (no length) if any node lacks coords or the total exceeds MAX_WAY_LENGTH_M, matching
-    osmium's InvalidLocationError / guard behaviour. Each node's v1 coord is a single row, so refs join
-    straight to raw_nodes with no dedup; validity and length fold into one per-way aggregate."""
+    """way_len(way_id, length): haversine over each open way create's first-version node coords. A way with a
+    missing node coord or a length over MAX_WAY_LENGTH_M gets none, matching osmium's guards."""
     nodes = (work / "raw_nodes_*.parquet").as_posix()
     waynodes = (work / "raw_waynodes_*.parquet").as_posix()
     con.execute(HAVERSINE_MACRO)
@@ -372,9 +362,8 @@ def aggregate(work: pathlib.Path, out: pathlib.Path) -> pathlib.Path:
 def convert(
     osh: str, changesets: str, start: dt.datetime, end: dt.datetime, work_dir: pathlib.Path, parts: int = 1
 ) -> pathlib.Path:
-    """Convert one .osh history + changeset dump to the two parquet datasets under `work_dir/out`.
-    `parts` blob-splits the history and streams the parts in parallel (no shared node index), then the
-    length join runs over all shards; use it to scale streaming across cores."""
+    """Convert one .osh history and changeset dump to the two parquet datasets under `work_dir/out`. `parts`
+    blob-splits the history to stream in parallel; the length join then runs over all shards."""
     work = pathlib.Path(work_dir)
     raw = work / "raw"
     raw.mkdir(parents=True, exist_ok=True)

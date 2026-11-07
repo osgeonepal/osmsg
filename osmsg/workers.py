@@ -66,8 +66,8 @@ def process_changefile(url: str, sequence_id: int) -> None:
     raw_path = file_path_for(url, "changefiles", Path(cfg["cache_dir"])).with_suffix("")
 
     handler = ChangefileHandler(cfg, sequence_id, _VALID_CHANGESETS)
-    # locations=True so open ways can be measured (haversine needs node coords); length is always on. A parse
-    # failure raises so the tick aborts before resume advances, rather than flushing partial, undercounted rows.
+    # locations=True: way length needs node coordinates. A parse failure raises so the tick aborts before
+    # resume advances.
     handler.apply_file(str(raw_path), locations=True)
 
     flush_rows_to_parquet(

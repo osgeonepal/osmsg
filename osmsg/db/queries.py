@@ -110,6 +110,25 @@ def _accumulate_tags(
                     tm[kv] = tm.get(kv, 0) + int(stat.get("m", 0))
 
 
+def _seed_tag_columns(rows, additional_tags, tag_mode: str, length_tags) -> None:
+    """Give every row the tag columns at zero so rows without matching tags still export them."""
+    for r in rows:
+        if tag_mode != "none":
+            r.setdefault("tags_create", {})
+            r.setdefault("tags_modify", {})
+        for k in additional_tags or []:
+            r.setdefault(f"{k}_create", 0)
+            r.setdefault(f"{k}_modify", 0)
+        for k in length_tags or []:
+            r.setdefault(f"{k}_len_m", 0)
+
+
+def _sort_tag_maps(rows) -> None:
+    for r in rows:
+        r["tags_create"] = dict(sorted(r.get("tags_create", {}).items(), key=lambda x: -x[1]))
+        r["tags_modify"] = dict(sorted(r.get("tags_modify", {}).items(), key=lambda x: -x[1]))
+
+
 def attach_tag_stats(
     conn: duckdb.DuckDBPyConnection,
     rows: list[dict[str, Any]],
@@ -125,15 +144,7 @@ def attach_tag_stats(
         return
 
     by_uid = {r["uid"]: r for r in rows}
-    for r in rows:
-        if tag_mode != "none":
-            r.setdefault("tags_create", {})
-            r.setdefault("tags_modify", {})
-        for k in additional_tags or []:
-            r.setdefault(f"{k}_create", 0)
-            r.setdefault(f"{k}_modify", 0)
-        for k in length_tags or []:
-            r.setdefault(f"{k}_len_m", 0)
+    _seed_tag_columns(rows, additional_tags, tag_mode, length_tags)
 
     for uid, tags in conn.execute(
         "SELECT uid, tags FROM changeset_stats WHERE tags IS NOT NULL AND len(tags) > 0"
@@ -149,9 +160,7 @@ def attach_tag_stats(
         )
 
     if tag_mode != "none":
-        for r in rows:
-            r["tags_create"] = dict(sorted(r.get("tags_create", {}).items(), key=lambda x: -x[1]))
-            r["tags_modify"] = dict(sorted(r.get("tags_modify", {}).items(), key=lambda x: -x[1]))
+        _sort_tag_maps(rows)
 
 
 def daily_summary(
@@ -196,15 +205,7 @@ def daily_summary(
     if not (additional_tags or tag_mode != "none" or length_tags):
         return rows
 
-    for r in rows:
-        if tag_mode != "none":
-            r.setdefault("tags_create", {})
-            r.setdefault("tags_modify", {})
-        for k in additional_tags or []:
-            r.setdefault(f"{k}_create", 0)
-            r.setdefault(f"{k}_modify", 0)
-        for k in length_tags or []:
-            r.setdefault(f"{k}_len_m", 0)
+    _seed_tag_columns(rows, additional_tags, tag_mode, length_tags)
 
     for date, tags in conn.execute(
         """
@@ -224,9 +225,7 @@ def daily_summary(
         )
 
     if tag_mode != "none":
-        for r in rows:
-            r["tags_create"] = dict(sorted(r.get("tags_create", {}).items(), key=lambda x: -x[1]))
-            r["tags_modify"] = dict(sorted(r.get("tags_modify", {}).items(), key=lambda x: -x[1]))
+        _sort_tag_maps(rows)
 
     return rows
 

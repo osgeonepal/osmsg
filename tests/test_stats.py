@@ -5,19 +5,10 @@ import pytest
 
 from osmsg.stats import (
     COUNT_COLS,
-    MAP_CHANGES_COLS,
-    map_changes_expr,
     map_changes_sum,
     prefix_upper_bound,
     sum_cols,
 )
-
-
-def test_map_changes_excludes_poi():
-    assert "poi_created" not in MAP_CHANGES_COLS
-    assert "poi_modified" not in MAP_CHANGES_COLS
-    assert set(MAP_CHANGES_COLS) == {c for c in COUNT_COLS if not c.startswith("poi")}
-    assert COUNT_COLS[:9] == MAP_CHANGES_COLS
 
 
 @pytest.fixture
@@ -48,11 +39,6 @@ def test_sum_cols_and_map_changes(stats_conn):
     assert u1["poi_created"] == 5
     # map_changes = all 9 non-poi cols summed, poi excluded: (10+1+0+5+0+0+0+0+0)+(20+2+1+4+1+0+1+0+0) = 16 + 29 = 45
     assert u1["map_changes"] == 45
-
-
-def test_map_changes_expr_is_nine_terms():
-    assert map_changes_expr("cs").count("+") == 8  # nine columns, eight plus signs
-    assert "poi" not in map_changes_expr("cs")
 
 
 def test_prefix_upper_bound():

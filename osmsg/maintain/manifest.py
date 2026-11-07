@@ -3,12 +3,12 @@ hybrid history read."""
 
 import json
 import pathlib
-import subprocess
 import tempfile
 
-import requests
+import huggingface_hub
 
-SCHEMA_VERSION = 1
+from .._http import session
+from ..history import SCHEMA_VERSION, _manifest_http_url
 
 
 def covered_months(out_dir: pathlib.Path) -> list[tuple[int, int]]:
@@ -22,8 +22,7 @@ def covered_months(out_dir: pathlib.Path) -> list[tuple[int, int]]:
 
 
 def _upload(repo: str, path: pathlib.Path) -> None:
-    cmd = ["uvx", "--from", "huggingface_hub", "hf", "upload", repo, str(path), "manifest.json"]
-    subprocess.run([*cmd, "--repo-type", "dataset"], check=True)
+    huggingface_hub.upload_file(path_or_fileobj=path, path_in_repo="manifest.json", repo_id=repo, repo_type="dataset")
 
 
 def write_manifest(out_dir: pathlib.Path, *, drop_last: bool = False, repo: str | None = None) -> dict:
@@ -45,15 +44,15 @@ def write_manifest(out_dir: pathlib.Path, *, drop_last: bool = False, repo: str 
 
 def bump_manifest(repo: str, new_month: str) -> dict:
     """Advance the published manifest's max_month to new_month (forward only) and re-upload it."""
-    url = f"https://huggingface.co/datasets/{repo}/resolve/main/manifest.json"
-    resp = requests.get(url, timeout=15)
+    resp = session.get(_manifest_http_url(f"hf://datasets/{repo}"))
     resp.raise_for_status()
     manifest = resp.json()
     if new_month <= str(manifest["max_month"]):
         return manifest
     manifest["max_month"] = new_month
     manifest["schema_version"] = SCHEMA_VERSION
-    path = pathlib.Path(tempfile.mkdtemp()) / "manifest.json"
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
-    _upload(repo, path)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "manifest.json"
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        _upload(repo, path)
     return manifest

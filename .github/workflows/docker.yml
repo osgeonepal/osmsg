@@ -26,10 +26,16 @@ jobs:
         include:
           - target: cli
             image: ghcr.io/${{ github.repository }}
+            smoke_entrypoint: /app/.venv/bin/osmsg
+            smoke_args: --version
           - target: api
             image: ghcr.io/${{ github.repository }}-api
+            smoke_entrypoint: /app/.venv/bin/python
+            smoke_args: -c "import api.app"
           - target: worker
             image: ghcr.io/${{ github.repository }}-worker
+            smoke_entrypoint: /bin/sh
+            smoke_args: -c "python -c 'import osmsg._tick' && supercronic -version"
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +66,27 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+
+      # Smoke the native arch before pushing; the multi-arch build below reuses these layers.
+      - name: Build native image for smoke test
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          tags: osmsg-smoke:${{ matrix.target }}
+          cache-from: type=gha
+
+      - name: Smoke test
+        run: docker run --rm --entrypoint ${{ matrix.smoke_entrypoint }} osmsg-smoke:${{ matrix.target }} ${{ matrix.smoke_args }}
+
+      # The amd64 smoke cannot see a wrong-arch binary, so check the arm64 supercronic directly.
+      - name: Check arm64 supercronic
+        if: matrix.target == 'worker'
+        run: |
+          docker buildx build --platform linux/arm64 --target supercronic --output type=local,dest="$RUNNER_TEMP/sc" .
+          file "$RUNNER_TEMP/sc/supercronic" | tee /dev/stderr | grep aarch64
 
       - name: Build and push
         id: push

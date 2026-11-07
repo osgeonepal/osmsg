@@ -20,7 +20,7 @@ requirements:
   host:
     - python >=3.11
     - pip
-    - uv-build >=0.5.15,<0.9
+    - uv-build >=0.5.15,<0.12
   run:
     - python >=3.11
     - pyosmium >=4.3.1          # PyPI 'osmium' is 'pyosmium' on conda-forge

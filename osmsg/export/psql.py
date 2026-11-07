@@ -120,8 +120,7 @@ def _push_changeset_stats(conn: duckdb.DuckDBPyConnection, where: str = "") -> N
 
 
 def _push_changeset_hashtags(conn: duckdb.DuckDBPyConnection, where: str = "") -> None:
-    # One lowercased (hashtag, changeset) row per tag, so the API can range-scan the hashtag prefix by
-    # index instead of scanning the whole recent tail. `where` filters on changeset_id, same set as changesets.
+    # One lowercased (hashtag, changeset) row per tag so the API range-scans hashtag prefixes by index.
     conn.execute(
         f"""
         INSERT INTO pg_target.changeset_hashtag (hashtag, changeset_id, created_at)
@@ -132,11 +131,8 @@ def _push_changeset_hashtags(conn: duckdb.DuckDBPyConnection, where: str = "") -
 
 
 def _push_chunked(conn: duckdb.DuckDBPyConnection, source: str, push, extra: str = "") -> None:
-    """Call push() once per changeset_id range so each range commits on its own, keeping peak memory to
-    one chunk. The chunk count scales with the row count (one commit per ~_CHUNK_TARGET_ROWS rows, capped
-    at _BULK_COMMIT_CHUNKS), so a small incremental delta pushes in a single statement instead of paying
-    each DuckDB->PG round-trip's fixed cost 32 times. `extra` is an extra predicate (no WHERE) ANDed into
-    both the bounds probe and every chunk, so an incremental push chunks only the rows it will push."""
+    """Call push() per changeset_id range so each commits alone, bounding memory; the chunk count scales with
+    rows (capped at _BULK_COMMIT_CHUNKS) so a small delta is one statement. `extra` is ANDed into every chunk."""
     where_extra = f" WHERE {extra}" if extra else ""
     bounds = conn.execute(
         f"SELECT count(*), min(changeset_id), max(changeset_id) FROM {source}{where_extra}"
@@ -157,8 +153,7 @@ _CHANGEFILE_RANK = {"/day": 1, "/hour": 2, "/minute": 3}
 
 
 def _changefile_rank(source_url: str) -> int:
-    """Coarse->fine rank of a planet changefile replication source (day<hour<minute); 0 if the URL is
-    not a changefile granularity (e.g. the changesets stream or a geofabrik country source)."""
+    """Rank of a planet changefile source, day < hour < minute; 0 for any other URL (changesets, geofabrik)."""
     for suffix, rank in _CHANGEFILE_RANK.items():
         if source_url.endswith(suffix):
             return rank
@@ -166,8 +161,8 @@ def _changefile_rank(source_url: str) -> int:
 
 
 def _superseded_changefile_sources(local_sources: set[str], existing_sources: set[str]) -> set[str]:
-    """PG changefile sources coarser than the finest changefile source the local store now tracks. These
-    are the residue of a clean day->hour->minute handoff (disjoint coverage), safe to retire in PG."""
+    """PG changefile sources coarser than the finest one the local store tracks: residue of a clean
+    granularity handoff with disjoint coverage, so safe to retire."""
     local_finest = max((_changefile_rank(u) for u in local_sources), default=0)
     if not local_finest:
         return set()
@@ -175,15 +170,13 @@ def _superseded_changefile_sources(local_sources: set[str], existing_sources: se
 
 
 def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = False) -> None:
-    """Push every osmsg table to the libpq DSN target. bulk_load is for the one-time full-history
-    import (drops indexes and foreign keys, streams, rebuilds, commits per range); leave it off for
-    incremental --update pushes. The DSN is interpolated into ATTACH, so it must be trusted."""
+    """Push every osmsg table to the libpq DSN target; bulk_load drops and rebuilds indexes and foreign keys for
+    the one-time full-history import. The DSN is interpolated into ATTACH, so it must be trusted."""
     conn.execute("INSTALL spatial")
     conn.execute("LOAD spatial")
     attach_postgres(conn, dsn, alias="pg_target")
     try:
-        # Create the tags composite type as the first PG op (a fresh write txn; a prior read would pin the
-        # connection read-only). On re-push it already exists (the idempotent case); anything else is real.
+        # The tags type must be the first PG op: a prior read would pin the connection read-only.
         try:
             _pg(conn, PG_TAG_TYPE_SQL)
         except duckdb.Error as exc:
@@ -194,16 +187,15 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
             if stmt:
                 _pg(conn, stmt)
 
-        # Refuse cross-source push: would double-count via the (seq_id, changeset_id) PK.
         local_sources = {r[0] for r in conn.execute("SELECT source_url FROM state").fetchall()}
         existing_sources = {r[0] for r in conn.execute("SELECT source_url FROM pg_target.state").fetchall()}
-        # A day->hour->minute handoff leaves the coarse source's stale resume row in PG; prune it (data is
-        # time-disjoint by the boundary) so the mixing guard below does not trip on it. Only the row goes.
+        # A granularity handoff leaves the coarse source's resume row in PG; drop only that row (coverage is
+        # disjoint at the boundary) so the cross-source guard below does not trip on it.
         superseded = _superseded_changefile_sources(local_sources, existing_sources)
         for stale in superseded:
             conn.execute("DELETE FROM pg_target.state WHERE source_url = ?", [stale])
         existing_sources -= superseded
-        # All pushes are ON CONFLICT DO NOTHING, so order is irrelevant; stream instead of buffering.
+        # All pushes are ON CONFLICT DO NOTHING, so order is irrelevant and DuckDB can stream them unbuffered.
         conn.execute("SET preserve_insertion_order = false")
         cross_source = existing_sources - local_sources
         if cross_source and local_sources:
@@ -230,8 +222,7 @@ def to_psql(conn: duckdb.DuckDBPyConnection, dsn: str, *, bulk_load: bool = Fals
                 "WHERE uid IN (SELECT uid FROM changeset_stats WHERE seq_id <> 0) "
                 "OR uid IN (SELECT uid FROM changesets) ON CONFLICT DO NOTHING"
             )
-            # Chunked like the bulk path: one INSERT of the whole live tail exceeds the worker's memory
-            # once the tail grows to a month; per-range commits keep peak memory to a single chunk.
+            # Chunked: one INSERT of a month-sized live tail exceeds the worker's memory.
             _push_chunked(conn, "changesets", _push_changesets, not_history)
             _push_chunked(conn, "changeset_stats", _push_changeset_stats, "seq_id <> 0")
             _push_chunked(conn, "changesets", _push_changeset_hashtags, not_history)

@@ -9,12 +9,12 @@
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Container](https://img.shields.io/badge/ghcr.io-osgeonepal%2Fosmsg-2496ED?logo=docker)](https://github.com/osgeonepal/osmsg/pkgs/container/osmsg)
 
-**OpenStreetMap Stats Generator.** A tiny CLI (and Python library) that turns OSM history into per-user counts
+**OpenStreetMap Stats Generator.** A CLI and Python library that turns OSM history into per-user counts
 of nodes, ways, and relations created, modified, or deleted, written to parquet, csv, json, markdown, or Postgres.
 
 A Project of [OSGeo Nepal](https://osgeonepal.org).
 
-## What does it do?
+## Features
 
 - Per-user create/modify/delete counts over any time window.
 - Tag and hashtag breakdowns (e.g. `building`, `#hotosm`).
@@ -26,17 +26,17 @@ A Project of [OSGeo Nepal](https://osgeonepal.org).
 
 ## Install
 
-Pick the one that fits how you work.
+Pick the one that fits how you work: `uvx` runs osmsg once without installing it, `pip install` adds it
+to a project, `uv tool install` installs the standalone CLI, and the Docker image runs it in a container.
 
 ```bash
-uvx --from osmsg osmsg --last hour       # zero-install, one-shot run
-pip install osmsg                        # into your project
-uv tool install osmsg                    # standalone CLI
+uvx --from osmsg osmsg --last hour
+pip install osmsg
+uv tool install osmsg
 docker run --rm -v "$PWD:/work" -w /work ghcr.io/osgeonepal/osmsg:latest --last hour
 ```
 
-`uvx` can run osmsg in a throwaway environment , no install, no virtualenv to manage. Works
-with any flag combination, e.g. `uvx --from osmsg osmsg --last hour --tags building --summary -f parquet -f markdown`.
+`uvx` accepts any flag combination, for example `uvx --from osmsg osmsg --last hour --tags building --summary -f parquet -f markdown`.
 
 Planned install channels (not yet published): conda-forge (`conda install -c conda-forge osmsg`) and a
 Homebrew tap (`brew install osgeonepal/tap/osmsg`).
@@ -48,22 +48,26 @@ below is for macOS, Linux, and pip/uv users.
 
 ## Quick start
 
+The first command counts the whole planet over the last hour, the second adds a `building` tag
+breakdown over the last day, and the third keeps only changesets tagged `#hotosm`:
+
 ```bash
-osmsg --last hour                        # planet, last hour
-osmsg --last day --tags building         # last day with a tag breakdown
-osmsg --hashtags hotosm --last day       # only changesets tagged #hotosm
+osmsg --last hour
+osmsg --last day --tags building
+osmsg --hashtags hotosm --last day
 ```
 
-That's it. A `stats.duckdb` and a `stats.parquet` show up in your current folder.
+Each run writes a `stats.duckdb` and a `stats.parquet` to the current folder.
 
 ## Set up a full history store
 
-Two commands give you a complete, self-updating store. The first loads all of OSM history from the
-published dataset and records where to resume; the second catches up to now and runs on a schedule.
+Two commands give you a complete, self-updating store. `--insert` loads all of OSM history from the
+published dataset into `stats.duckdb`, records where to resume, and exits; `--update` catches up to now
+and is the command to repeat on cron:
 
 ```bash
-osmsg --insert            # load all history into stats.duckdb, then exit
-osmsg --update            # catch up to now (repeat on cron)
+osmsg --insert
+osmsg --update
 ```
 
 `osmsg` clears the multi-week backlog on day diffs, then refines to finer diffs as the store stays
@@ -115,8 +119,10 @@ osmsg --start "2026-04-01" --end "2026-04-08" \
 
 ### 3. Run on a schedule
 
+`--update` picks up where the last run stopped:
+
 ```bash
-osmsg --country nepal --update           # picks up where the last run stopped
+osmsg --country nepal --update
 ```
 
 Drop that into cron or a GitHub Actions schedule. State is stored inside the DuckDB file, so reruns are safe.
@@ -129,7 +135,9 @@ duckdb stats.duckdb -c "SELECT username, SUM(nodes_created) AS n
                         GROUP BY username ORDER BY n DESC LIMIT 10"
 ```
 
-Same schema in DuckDB and Postgres: `users`, `changesets`, `changeset_stats`, `state`.
+DuckDB and Postgres share the tables `users`, `changesets`, `changeset_stats`, and `state`. Postgres
+stores the changeset bounding box as `min_lon`, `min_lat`, `max_lon`, `max_lat` columns (DuckDB uses a
+`geom` column) and adds a `changeset_hashtag` table with one row per hashtag and changeset.
 
 ### 5. Run the API
 
@@ -168,10 +176,13 @@ result = run(RunConfig(
 print(result["files"]["parquet"])
 ```
 
-Same pipeline as the CLI.
+`run` executes the same pipeline as the CLI, configured by the `RunConfig` fields. It raises
+`OsmsgError` (or a subclass) on failure, and `NoDataFoundError` when the window produces no stats. `countries` needs OSM credentials, read from `OSM_USERNAME`
+and `OSM_PASSWORD` or passed as `osm_username` and `osm_password`.
 
-### 7. Long flag lists? Use a config
+### 7. Use a config file
 
+Long flag lists fit in a YAML file:
 
 ```bash
 osmsg --config nepal.yaml
@@ -183,14 +194,14 @@ Each option is a YAML key written with its underscore name: `output_dir`, `histo
 ## Output formats
 
 Every run writes `stats.duckdb` (or `<--name>.duckdb`) plus the formats you ask for via
-`-f parquet|csv|json|markdown|psql`. Parquet is the default. Open it with duckdb, polars, pandas, anything.
+`-f parquet|csv|json|markdown|psql`. Parquet is the default. DuckDB, polars, and pandas read it directly.
 
-Rerunning the same query with a different `-f` re-exports from the existing `<name>.duckdb` instead of
-refetching, so adding a format is instant. Pass `--overwrite` to force a fresh recompute.
+Rerunning the same query with a different `-f` re-exports from the existing `<name>.duckdb` without
+refetching, so adding a format skips the download and parse. Pass `--overwrite` to force a fresh recompute.
 
 ## Configuration
 
-Every meaningful flag has a matching `OSMSG_*` env var so the CLI, a `.env` file, and a
+Most flags have a matching `OSMSG_*` env var so the CLI, a `.env` file, and a
 docker-compose `environment:` block all reach the same setting. CLI flag wins over env var.
 
 | CLI flag | Env var | Default | Notes |
@@ -198,7 +209,7 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--name` | `OSMSG_NAME` | `stats` | Output basename; sets `<name>.duckdb`. |
 | `--country` | `OSMSG_COUNTRY` | unset | Geofabrik region id(s). Comma-separated when set via env. |
 | `--boundary` | `OSMSG_BOUNDARY` | unset | GeoJSON path or inline GeoJSON. |
-| `--url` | `OSMSG_URL` | `minute` | `minute`/`hour`/`day` shortcut or full URL. Comma-separated when set via env. |
+| `--url` | `OSMSG_URL` | unset | `minute`/`hour`/`day` shortcut or full URL. Unset picks the granularity from the time span. Comma-separated when set via env. |
 | `--workers` | `OSMSG_WORKERS` | cpu count | Parallel parse workers. |
 | `--cache-dir` | `OSMSG_CACHE_DIR` | platform cache | Where downloaded OSM files are kept across runs. |
 | `--output-dir` | `OSMSG_OUTPUT_DIR` | `.` | Where `<name>.duckdb` and exports are written. |
@@ -208,7 +219,7 @@ docker-compose `environment:` block all reach the same setting. CLI flag wins ov
 | `--psql-bulk` | `OSMSG_PSQL_BULK` | off | Faster first full load to Postgres. |
 | `--history` / `--no-history` | `OSMSG_HISTORY` | on | Read covered months from the published dataset. |
 | `--history-url` | `OSMSG_HISTORY_URL` | `osmsg-history` | Published dataset location. |
-| `--insert` | (none) | off | Load history into the store and seed resume, then exit. No window loads all of it. |
+| `--insert` | (none) | off | Load history into the store and seed resume, then exit. Without a window it loads all of it. |
 | `--seed-only` | (none) | off | With `--insert`: seed resume state at the published frontier without loading rows. |
 | `--osh-file` / `--changeset-file` | (none) | unset | Insert from local planet history + changeset files. |
 | `--max-update-window-hours` | `OSMSG_MAX_UPDATE_WINDOW_HOURS` | unset | Cap each `--update` run to this many hours so a large backlog catches up over successive runs. |
@@ -221,16 +232,20 @@ A `.env` file at the working directory is loaded automatically.
 
 ## Maintainers
 
-Generating and publishing the history dataset is the `osmsg maintain` group:
+Generating and publishing the history dataset is the `osmsg maintain` group. `month` builds and
+uploads one finished month (with `--no-upload` it only builds it locally for review). `convert` turns
+local planet files into the datasets, and `publish` writes and uploads the manifest. `refresh` pulls
+the newest published month into a local artifact, `prune-pg` deletes Postgres rows that published
+history covers, and `check --fix` backfills stub changesets whose metadata is missing.
 
 ```bash
-osmsg maintain month 2026-06 --repo osgeonepal/osmsg-history   # append one finished month
-osmsg maintain month 2026-06 --no-upload                       # generate locally, review, upload later
+osmsg maintain month 2026-06 --repo osgeonepal/osmsg-history
+osmsg maintain month 2026-06 --no-upload
 osmsg maintain convert history.osh.pbf changesets.osm.bz2 2005-01-01 2026-06-01 work --parts 24
 osmsg maintain publish work/out --repo osgeonepal/osmsg-history
-osmsg maintain refresh --artifact-dir /srv/osmsg/artifact    # pull the newest published month locally
-osmsg maintain prune-pg --psql-dsn "postgresql://user:pass@localhost/osmsg"   # drop rows now covered by history
-osmsg maintain check --psql-dsn "postgresql://user:pass@localhost/osmsg" --fix # backfill stub changesets
+osmsg maintain refresh --artifact-dir /srv/osmsg/artifact
+osmsg maintain prune-pg --psql-dsn "postgresql://user:pass@localhost/osmsg"
+osmsg maintain check --psql-dsn "postgresql://user:pass@localhost/osmsg" --fix
 ```
 
 ## Documentation
@@ -243,18 +258,18 @@ osmsg maintain check --psql-dsn "postgresql://user:pass@localhost/osmsg" --fix #
 
 ## Contributing
 
-Pull requests are welcome. Quick path:
+Pull requests are welcome. `just setup` installs every dependency group and the git hooks, and
+`just test` runs the offline test suite:
 
 ```bash
 git clone https://github.com/osgeonepal/osmsg && cd osmsg
 git switch develop
-uv sync
-uv run pre-commit install
-uv run pytest -m "not network"
+just setup
+just test
 ```
 
 Please read [CONTRIBUTING.md](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDUCT.md) before opening a PR.
-Use [Conventional Commits](https://www.conventionalcommits.org/) (`cz commit`).
+Use [Conventional Commits](https://www.conventionalcommits.org/) (`uv run cz commit`).
 
 ## License
 

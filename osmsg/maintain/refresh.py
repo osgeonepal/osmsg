@@ -1,7 +1,5 @@
-"""Pull the newest published rollup into a deployment's local history artifact so its frontier advances
-to the latest month without a rebuild. Download and verify into a scratch dir, then swap atomically:
-the parquet files first and the manifest last, so a query never sees an advanced frontier without the
-data behind it."""
+"""Advance a local history artifact to the newest published month; the manifest swaps last so the frontier
+never leads the data."""
 
 import datetime as dt
 import os

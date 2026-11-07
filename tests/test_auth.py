@@ -15,7 +15,7 @@ def test_csrf_parses_canonical_attribute_order():
 
 
 def test_csrf_parses_reversed_attribute_order():
-    """The old regex was order-sensitive. html.parser is not."""
+    """The csrf meta tag parses regardless of attribute order."""
     html = '<html><head><meta content="xyz789" name="csrf-token"></head></html>'
     assert _csrf(html) == "xyz789"
 
@@ -48,5 +48,5 @@ def test_make_session_has_retry_adapter():
 
 
 def test_shared_session_has_retry_adapter():
-    """Regression: the auth flow used to instantiate a bare requests.Session() without retries."""
+    """The auth flow's shared session carries the retry adapter."""
     assert _has_retry_adapter(shared_session)

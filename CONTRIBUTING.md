@@ -9,13 +9,15 @@ welcome PRs of every size: a typo fix, a new flag, a perf patch, a docs cleanup.
 ```bash
 git clone https://github.com/osgeonepal/osmsg && cd osmsg
 git switch develop
-uv sync
-uv run pre-commit install
-uv run pytest -m "not network"
+just setup
+just test
 ```
 
-`uv sync` installs runtime and dev dependencies (`ruff`, `ty`, `pytest`, `pre-commit`, `commitizen`) from
-`pyproject.toml`. `uv` is the only build/dev tool you need; no system OSM libraries are required.
+`just setup` runs `uv sync --all-groups`, which installs the runtime dependencies, the dev tools (`ruff`,
+`ty`, `pytest`, `pre-commit`, `commitizen`), and the `api` group that the API tests import. It then
+installs the pre-commit, commit-msg, and pre-push git hooks. `just test` runs the offline test suite
+(`pytest -m "not network"`). The project needs `uv` and [`just`](https://github.com/casey/just);
+system OSM libraries are not required.
 
 If you do not have `uv` yet:
 
@@ -33,13 +35,15 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ## Coding standards
 
-- **Format and lint**: `ruff` (config in `pyproject.toml`). Pre-commit auto-fixes most issues. Run manually with
-  `uv run ruff check osmsg tests` and `uv run ruff format osmsg tests`.
+- **Format and lint**: `ruff` (config in `pyproject.toml`). Pre-commit auto-fixes most issues. `just lint` runs
+  every hook against the whole repo.
 - **Type-check**: `ty` (Astral). Must pass with zero errors: `uv run ty check osmsg`.
 - **Tests**:
-  - `uv run pytest -m "not network"` for offline checks.
+  - `just test` for offline checks.
   - `uv run pytest -m network` for live Geofabrik / OSM integration (needs `OSM_USERNAME` and `OSM_PASSWORD`).
-- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) via `cz commit`. See [docs/Version_control.md](./docs/Version_control.md).
+  - The API speed and correctness tests run against the deployment named by `OSMSG_API_BASE` and skip
+    when it is unset.
+- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) via `uv run cz commit`. See [docs/Version_control.md](./docs/Version_control.md).
 
 ## CI
 
@@ -57,7 +61,7 @@ A green CI is a hard requirement before merge.
 Releases are cut from `master` by maintainers using `commitizen`:
 
 ```bash
-cz bump
+uv run cz bump
 git push --follow-tags
 ```
 

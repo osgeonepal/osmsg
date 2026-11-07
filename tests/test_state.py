@@ -1,4 +1,4 @@
-"""Single-row resume state per source_url, replaces the old per-run audit log."""
+"""Resume state is a single row per source_url."""
 
 import datetime as dt
 
@@ -24,7 +24,7 @@ def test_upsert_state_inserts_on_first_call(fresh_db):
 
 
 def test_upsert_state_replaces_on_second_call(fresh_db):
-    """Same source_url + new seq → exactly one row remains, not two."""
+    """Same source_url with a new seq leaves exactly one row, not two."""
     for seq in (10, 20, 30):
         upsert_state(
             fresh_db,

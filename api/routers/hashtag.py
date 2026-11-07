@@ -1,7 +1,5 @@
-"""Hashtag endpoints, served DuckDB-on-top (published hashtag_changeset artifact for history + recent tail
-from the base Postgres tables). The path hashtag is comma-separated for multiple prefixes, the union
-deduped by changeset; an optional half-open [start, end) window narrows any endpoint, omit both for all-time.
-"""
+"""Hashtag endpoints. The path hashtag is a comma-separated list of prefixes whose union is deduped by
+changeset; an optional half-open [start, end) window narrows any endpoint."""
 
 from datetime import datetime
 from typing import Any
@@ -9,11 +7,10 @@ from typing import Any
 from litestar import Controller, Router, get
 from litestar.exceptions import HTTPException
 
-from osmsg.query import LEADERBOARD_SORTS as _LEADERBOARD_SORTS
 from osmsg.query import TREND_INTERVALS as _TREND_INTERVALS
 
 from .. import duck
-from ._common import to_utc
+from ._common import to_utc, validate_page
 
 
 def _hashtags(hashtag: str) -> list[str]:
@@ -57,17 +54,9 @@ class HashtagController(Controller):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict[str, Any]:
-        """One page of the leaderboard as `{items, page, page_size, total, total_pages}`. `sort` is one of
-        the element/name columns, `order` asc|desc, `q` an optional contributor-name search; all applied
-        server-side across the whole result, so paging, sorting, and searching are consistent. Per-user
-        detail (tag_stats/editors/hashtags) is attached only with `detail=true` (the export path); the UI
-        fetches it per contributor from `/user/{uid}`."""
-        if sort not in _LEADERBOARD_SORTS:
-            raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(_LEADERBOARD_SORTS)}")
-        if order not in ("asc", "desc"):
-            raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
-        if page < 1:
-            raise HTTPException(status_code=400, detail="page must be >= 1")
+        """One page of the leaderboard, sorted, searched and paged server-side; per-user detail only with
+        `detail=true`."""
+        validate_page(sort, order, page)
         start, end = _window(start, end)
         return await duck.leaderboard(
             _hashtags(hashtag),
@@ -124,7 +113,7 @@ class HashtagController(Controller):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Trending hashtags in the queried scope, ranked by distinct contributors: `[{hashtag, users}]`."""
+        """Trending hashtags in the queried scope, ranked by distinct contributors: `[{hashtag, users, edits}]`."""
         start, end = _window(start, end)
         return await duck.hashtags(_hashtags(hashtag), exact=exact, limit=limit, start=start, end=end)
 

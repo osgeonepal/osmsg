@@ -8,7 +8,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev --no-editable
 
@@ -35,7 +35,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev --group api
 
@@ -46,6 +46,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --group api --no-editable
 
 RUN find /app/.venv -type d -name __pycache__ -exec rm -rf {} +
+
+
+# One stage per arch because ADD --checksum takes a single digest; the worker picks its arch below.
+FROM scratch AS supercronic-amd64
+ADD --chmod=755 --checksum=sha256:feefa310da569c81b99e1027b86b27b51e6ee9ab647747b49099645120cfc671 \
+    https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64 /supercronic
+
+FROM scratch AS supercronic-arm64
+ADD --chmod=755 --checksum=sha256:f1f8585c66de020fef494dd636058f99949d108f569fef00016a1c8b9eb145b3 \
+    https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-arm64 /supercronic
+
+FROM supercronic-${TARGETARCH} AS supercronic
 
 
 FROM gcr.io/distroless/python3-debian13:nonroot AS cli
@@ -61,7 +73,7 @@ ENTRYPOINT ["/app/.venv/bin/osmsg"]
 CMD ["--help"]
 
 
-FROM python:3.13-slim AS api
+FROM python:3.13-slim-bookworm AS api
 
 # osmsg pulls in osmium (via the shared query surface), which needs libexpat at runtime.
 RUN apt-get update \
@@ -82,15 +94,13 @@ ENTRYPOINT ["/app/.venv/bin/litestar", "--app", "api.app:app", "run", "--host", 
 CMD []
 
 
-FROM python:3.13-slim AS worker
+FROM python:3.13-slim-bookworm AS worker
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG SUPERCRONIC_VERSION=0.2.33
-ARG TARGETARCH=amd64
-ADD --chmod=755 https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH} /usr/local/bin/supercronic
+COPY --from=supercronic /supercronic /usr/local/bin/supercronic
 
 WORKDIR /app
 COPY --from=builder-base /app/.venv /app/.venv

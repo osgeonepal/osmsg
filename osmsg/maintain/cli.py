@@ -1,4 +1,4 @@
-"""`osmsg maintain` sub-app: generate, convert, and publish the history parquet datasets."""
+"""`osmsg maintain` sub-app for the published history datasets."""
 
 import datetime as dt
 from pathlib import Path
@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 
+from ..history import DEFAULT_HISTORY_REPO, DEFAULT_HISTORY_URL
 from ..ui import console, error, info
 
 UTC = dt.UTC
@@ -77,7 +78,7 @@ def prune_pg_cmd(
     psql_dsn: Annotated[str, typer.Option("--psql-dsn", help="Postgres DSN of the deployment to prune.")],
     history_url: Annotated[
         str, typer.Option("--history-url", help="Published dataset base (hf://datasets/... or URL).")
-    ] = "hf://datasets/kshitijrajsharma/osmsg-history",
+    ] = DEFAULT_HISTORY_URL,
     overlap_days: Annotated[
         int, typer.Option("--overlap-days", help="Keep this many days beyond the frontier before deleting.")
     ] = 2,
@@ -107,11 +108,10 @@ def refresh_cmd(
     artifact_dir: Annotated[Path, typer.Option("--artifact-dir", help="Local history artifact the API reads.")],
     repo: Annotated[
         str, typer.Option("--repo", help="HuggingFace dataset repo id to pull the newest month from.")
-    ] = "kshitijrajsharma/osmsg-history",
+    ] = DEFAULT_HISTORY_REPO,
 ) -> None:
-    """Pull the newest published month into the local artifact (atomic, verified) so the frontier advances
-    without a rebuild. Idempotent; a no-op when already current. Prune Postgres separately with prune-pg
-    once the API is serving the advanced frontier."""
+    """Pull the newest published month into the local artifact (atomic, verified, idempotent) so the frontier
+    advances without a rebuild. Run prune-pg only once the API serves the advanced frontier."""
     from .refresh import refresh_artifact
 
     refresh_artifact(repo, artifact_dir)

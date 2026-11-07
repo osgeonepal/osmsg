@@ -31,8 +31,7 @@ class ChangesetHandler(osmium.SimpleHandler):
             return
         cfg = self.config
 
-        # Drop closed-before-window changesets so attach_metadata can't leak their
-        # hashtags onto in-window users.
+        # Drop changesets closed before the window so attach_metadata cannot leak their hashtags.
         start = cfg.get("window_start_utc")
         if start is not None and not c.open:
             closed = c.closed_at
@@ -54,8 +53,7 @@ class ChangesetHandler(osmium.SimpleHandler):
                 return
 
         keep = bool(cfg["changeset_meta"] and not cfg["hashtags"])
-        # Some editors fill only the `hashtags` tag (comment stays generic), so tokenize both via regex;
-        # real data mixes `;`, space, and comma as separators inside `hashtags`.
+        # Some editors fill only the `hashtags` tag, separated by `;`, space or comma, so tokenize both via regex.
         comment = c.tags.get("comment", "")
         hashtags_field = c.tags.get("hashtags", "")
         inline_tokens = HASHTAG_RE.findall(comment)
@@ -133,9 +131,8 @@ class ChangefileHandler(osmium.SimpleHandler):
 
     @staticmethod
     def _way_length(way_nodes) -> float:
-        """Haversine metres of an OPEN way (first ref != last ref); 0 for a closed way (an area, not a
-        length) or when geometry is unavailable. In the live per-diff path a node from an earlier diff
-        has no location here (InvalidLocationError) -> 0; the backfill's global index measures those."""
+        """Haversine metres of an open way; 0 for a closed way (an area) or a node without a location, which
+        in the live per-diff path comes from an earlier diff and is measured by the backfill instead."""
         if not way_nodes or len(way_nodes) < 2 or way_nodes[0].ref == way_nodes[-1].ref:
             return 0.0
         try:
@@ -186,8 +183,7 @@ class ChangefileHandler(osmium.SimpleHandler):
                     tv.add_length(length_m)
 
     def _in_window(self, ts) -> bool:
-        # Lower-bound only; disjoint coverage between ticks comes from the seq boundary
-        # (next tick resumes at last_seq+1, with state.last_ts = state_ts(last_seq)).
+        # Lower bound only: ticks stay disjoint because the next one resumes at last_seq+1.
         return ts >= self.start
 
     def node(self, n) -> None:

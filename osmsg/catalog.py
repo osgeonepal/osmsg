@@ -1,12 +1,10 @@
-"""Assemble query sources into one relation so `stats.py` runs a single query wherever data lives: history
-(< frontier) from the `hashtag_changeset` rollup, the recent tail from the base tables (a local DuckDB store
-or attached Postgres, hashtag-filtered first), unioned and split at the frontier. The query runs in DuckDB.
-"""
+"""Query sources split at the frontier: history from the `hashtag_changeset` rollup, the recent tail from the
+base tables (local DuckDB store or attached Postgres), so `stats.py` runs one query wherever data lives."""
 
 import datetime as dt
 
 from .db.pg import sql_literal
-from .stats import COUNT_COLS, MAP_CHANGES_COLS
+from .stats import COUNT_COLS, MAP_CHANGES_COLS, sum_cols
 
 _PROJECTION = f"changeset_id, uid, editor, created_at, {', '.join(COUNT_COLS)}, tags"
 
@@ -22,8 +20,8 @@ def _pg_query(attach: str, inner: str) -> str:
 # Recent side aggregated in Postgres via the changeset_hashtag prefix index; each returns an inlined
 # postgres_query relation (no bind params), DISTINCT-deduped so a multi-tag changeset counts once.
 
-_PSUM = ", ".join(f"sum(s.{c}) AS {c}" for c in COUNT_COLS)
-_OSUM = ", ".join(f"sum({c}) AS {c}" for c in COUNT_COLS)
+_PSUM = sum_cols("s", coalesce=False)
+_OSUM = sum_cols(coalesce=False)
 _MC = " + ".join(f"s.{c}" for c in MAP_CHANGES_COLS)
 
 
@@ -40,8 +38,7 @@ def _pg_matched(prefixes, frontier, start, end, hashtag_table="changeset_hashtag
         bounds.append(f"created_at < {_pg_ts(end)}")
     where = f"({ranges}) AND {' AND '.join(bounds)}"
     if carry_created_at:
-        # A changeset's rows all carry its created_at, so min() is that value: lets trends bucket without
-        # a second scan of `changesets` just for the timestamp.
+        # A changeset's rows all carry its created_at, so min() is that value and trends skip scanning `changesets`.
         return (
             f"SELECT changeset_id, min(created_at) AS created_at "
             f"FROM {hashtag_table} WHERE {where} GROUP BY changeset_id"
@@ -95,9 +92,8 @@ def recent_editor_agg(attach, *, prefixes, frontier, start=None, end=None) -> st
 
 
 def recent_bucket_agg(attach, interval: str, *, prefixes, frontier, start=None, end=None) -> str:
-    """Per time-bucket recent aggregate: changesets, distinct users, map_changes. Powers the trends
-    endpoint. `created_at` comes from `changeset_hashtag` (carried in the matched CTE), so this joins only
-    changeset_stats, no second scan of changesets. Buckets are disjoint across the frontier -> additive."""
+    """Per time-bucket recent changesets, distinct users and map_changes; `created_at` comes from the matched
+    CTE so only changeset_stats is joined. Buckets are disjoint across the frontier, so they add up."""
     m = _pg_matched(prefixes, frontier, start, end, carry_created_at=True)
     inner = (
         f"WITH m AS ({m}), "
@@ -109,27 +105,9 @@ def recent_bucket_agg(attach, interval: str, *, prefixes, frontier, start=None, 
     return _pg_query(attach, inner)
 
 
-def recent_hashtag_agg(attach, *, prefixes, frontier, start=None, end=None) -> str:
-    """Per (hashtag, uid) recent aggregate: changesets, map_changes. Powers the trending-hashtags endpoint
-    (each matched hashtag attributes each of its changesets, so the sums are per hashtag, not deduped)."""
-    m = _pg_matched(prefixes, frontier, start, end)
-    ranges = " OR ".join(
-        f'(ch.hashtag COLLATE "C" >= {sql_literal(lo)} AND ch.hashtag COLLATE "C" < {sql_literal(hi)})'
-        for lo, hi in prefixes
-    )
-    inner = (
-        f"WITH m AS ({m}), pc AS (SELECT s.changeset_id, max(s.uid) AS uid, sum({_MC}) AS mc "
-        f"FROM m JOIN changeset_stats s USING (changeset_id) GROUP BY s.changeset_id) "
-        f"SELECT ch.hashtag AS hashtag, pc.uid AS uid, count(*) AS changesets, sum(pc.mc) AS mc "
-        f"FROM pc JOIN changeset_hashtag ch USING (changeset_id) WHERE {ranges} GROUP BY ch.hashtag, pc.uid"
-    )
-    return _pg_query(attach, inner)
-
-
 def recent_cooccur_agg(attach, *, prefixes, frontier, start=None, end=None) -> str:
-    """Per (hashtag, uid) recent aggregate over ALL hashtags carried by the matched changesets, so the
-    panel can show which other hashtags and projects were used alongside the search (co-occurring).
-    Same as `recent_hashtag_agg` but without narrowing the joined hashtags to the searched ranges."""
+    """Per (hashtag, uid) recent aggregate over every hashtag the matched changesets carry, for the
+    co-occurring hashtags panel."""
     m = _pg_matched(prefixes, frontier, start, end)
     inner = (
         f"WITH m AS ({m}), pc AS (SELECT s.changeset_id, max(s.uid) AS uid, sum({_MC}) AS mc "
@@ -227,6 +205,12 @@ def global_trending(attach, *, start, end) -> str:
     return _pg_query(attach, inner)
 
 
+def _pg_lower_ranges(col: str, prefixes) -> str:
+    return " OR ".join(
+        f"(lower({col}) >= {sql_literal(lo)} AND lower({col}) < {sql_literal(hi)})" for lo, hi in prefixes
+    )
+
+
 def _pg_user_window(frontier, start, end) -> str:
     bounds = [f"c.created_at >= {_pg_ts(frontier)}"]
     if start is not None:
@@ -239,8 +223,8 @@ def _pg_user_window(frontier, start, end) -> str:
 def recent_user_tags(attach, uids: list[int], *, prefixes, frontier, start=None, end=None) -> str:
     """Per (uid, key, value) recent tag breakdown for a fixed set of uids. Driven from the changeset_stats
     uid index (only those users' changesets), so it stays cheap regardless of the hashtag's total size."""
-    uid_list = ", ".join(str(int(u)) for u in uids)
-    ranges = " OR ".join(f"(lower(h) >= {sql_literal(lo)} AND lower(h) < {sql_literal(hi)})" for lo, hi in prefixes)
+    uid_list = _pg_uid_list(uids)
+    ranges = _pg_lower_ranges("h", prefixes)
     inner = (
         f"SELECT s.uid AS uid, (t).k AS k, (t).v AS v, sum((t).c) AS c, sum((t).m) AS m, sum((t).l) AS l "
         f"FROM changeset_stats s JOIN changesets c USING (changeset_id), unnest(s.tags) AS t "
@@ -250,24 +234,11 @@ def recent_user_tags(attach, uids: list[int], *, prefixes, frontier, start=None,
     return _pg_query(attach, inner)
 
 
-def recent_user_hashtags(attach, uids: list[int], *, prefixes, frontier, start=None, end=None) -> str:
-    """Per (uid, hashtag) recent membership for a fixed set of uids, driven from the changeset_stats uid
-    index; returns each matching hashtag the user contributed under in the window."""
-    uid_list = ", ".join(str(int(u)) for u in uids)
-    ranges = " OR ".join(f"(lower(h) >= {sql_literal(lo)} AND lower(h) < {sql_literal(hi)})" for lo, hi in prefixes)
-    inner = (
-        f"SELECT DISTINCT s.uid AS uid, lower(h) AS hashtag "
-        f"FROM changeset_stats s JOIN changesets c USING (changeset_id), unnest(c.hashtags) AS h "
-        f"WHERE s.uid IN ({uid_list}) AND {_pg_user_window(frontier, start, end)} AND ({ranges})"
-    )
-    return _pg_query(attach, inner)
-
-
 def recent_user_cooccur_hashtags(attach, uids: list[int], *, prefixes, frontier, start=None, end=None) -> str:
-    """Per (uid, hashtag) recent membership over ALL hashtags carried by each user's matched changesets,
-    so the profile can show which other hashtags and projects the user tagged alongside the search."""
-    uid_list = ", ".join(str(int(u)) for u in uids)
-    ranges = " OR ".join(f"(lower(x) >= {sql_literal(lo)} AND lower(x) < {sql_literal(hi)})" for lo, hi in prefixes)
+    """Per (uid, hashtag) recent membership over every hashtag on each user's matched changesets, for the
+    profile's co-occurring hashtags."""
+    uid_list = _pg_uid_list(uids)
+    ranges = _pg_lower_ranges("x", prefixes)
     inner = (
         f"SELECT DISTINCT s.uid AS uid, lower(h) AS hashtag "
         f"FROM changeset_stats s JOIN changesets c USING (changeset_id), unnest(c.hashtags) AS h "
@@ -279,8 +250,8 @@ def recent_user_cooccur_hashtags(attach, uids: list[int], *, prefixes, frontier,
 
 def recent_user_editors(attach, uids: list[int], *, prefixes, frontier, start=None, end=None) -> str:
     """Per (uid, editor) recent membership: the distinct editors each user used on their matched changesets."""
-    uid_list = ", ".join(str(int(u)) for u in uids)
-    ranges = " OR ".join(f"(lower(x) >= {sql_literal(lo)} AND lower(x) < {sql_literal(hi)})" for lo, hi in prefixes)
+    uid_list = _pg_uid_list(uids)
+    ranges = _pg_lower_ranges("x", prefixes)
     inner = (
         f"SELECT DISTINCT s.uid AS uid, c.editor AS editor "
         f"FROM changeset_stats s JOIN changesets c USING (changeset_id) "
@@ -291,8 +262,8 @@ def recent_user_editors(attach, uids: list[int], *, prefixes, frontier, start=No
 
 
 def _window_clause(start: dt.datetime | None, end: dt.datetime | None) -> tuple[str, list[object]]:
-    """Optional `created_at` bounds as SQL fragments plus their params, in order. Half-open [start, end):
-    inclusive lower, exclusive upper, matching the frontier split and the v1 API's window semantics."""
+    """Optional `created_at` bounds as SQL fragments plus their params. Half-open [start, end), matching the
+    frontier split."""
     parts: list[str] = []
     params: list[object] = []
     if start is not None:
@@ -310,11 +281,23 @@ def range_pred(col: str, prefixes: list[tuple[str, str]]) -> str:
     return " OR ".join(f"({col} >= ? AND {col} < ?)" for _ in prefixes)
 
 
+def _prefix_bounds(prefixes: list[tuple[str, str]]) -> list[object]:
+    if not prefixes:
+        raise ValueError("prefixes must be non-empty")
+    return [bound for pair in prefixes for bound in pair]
+
+
+def _history_filter(prefixes, frontier, start, end) -> tuple[str, list[object]]:
+    """WHERE body selecting history rows (< frontier) under the hashtag prefixes and window, with params."""
+    window_sql, window_params = _window_clause(start, end)
+    where = f"({range_pred('hashtag', prefixes)}) AND created_at < ?{window_sql}"
+    return where, [*_prefix_bounds(prefixes), frontier, *window_params]
+
+
 def _recent_from_base(stats_rel: str, changesets_rel: str, window_sql: str, prefix_pred: str) -> str:
-    """Per-changeset rows built on the fly from the base tables for matching changesets on/after the
-    frontier, counts summed across seq rows and native `tags` merged to match the rollup shape. `prefix_pred`
-    OR-s `lower(h) >= ? AND lower(h) < ?`; placeholders in order: frontier, (window bounds), (prefix bounds)."""
-    sums = ", ".join(f"SUM(s.{c}) AS {c}" for c in COUNT_COLS)
+    """Rollup-shaped per-changeset rows from the base tables for matches on or after the frontier.
+    Placeholder order: frontier, window bounds, then the prefix bounds `prefix_pred` OR-s together."""
+    sums = sum_cols("s", coalesce=False)
     payload = ", ".join(f"p.{c}" for c in COUNT_COLS)
     return f"""
         WITH matched AS (
@@ -353,19 +336,9 @@ def history_dedup_scope(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
 ) -> tuple[str, list[object]]:
-    """The deduped per-changeset HISTORY relation alone (< frontier), as its own SELECT so a caller can
-    aggregate it and the recent side separately, avoiding a DISTINCT ON over the full union that would
-    materialize the whole 14M-row intermediate for a big hashtag. `prefixes` non-empty. Returns (sql, params)."""
-    if not prefixes:
-        raise ValueError("prefixes must be non-empty")
-    window_sql, window_params = _window_clause(start, end)
-    prefix_params = [bound for pair in prefixes for bound in pair]
-    hist_pred = range_pred("hashtag", prefixes)
-    sql = (
-        f"SELECT DISTINCT ON (changeset_id) {_PROJECTION} FROM {history_rel} "
-        f"WHERE ({hist_pred}) AND created_at < ?{window_sql}"
-    )
-    return sql, [*prefix_params, frontier, *window_params]
+    """Deduped per-changeset history rows (< frontier), aggregated separately from the recent side."""
+    where, params = _history_filter(prefixes, frontier, start, end)
+    return f"SELECT DISTINCT ON (changeset_id) {_PROJECTION} FROM {history_rel} WHERE {where}", params
 
 
 def history_tag_agg(
@@ -376,21 +349,16 @@ def history_tag_agg(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
 ) -> tuple[str, list[object]]:
-    """Per (key, value) history tag breakdown, unnest-first so the per-hashtag duplication collapses in a
-    narrow (changeset_id, k, v) aggregate that spills, not a DISTINCT ON holding every tag list."""
-    if not prefixes:
-        raise ValueError("prefixes must be non-empty")
-    window_sql, window_params = _window_clause(start, end)
-    prefix_params = [bound for pair in prefixes for bound in pair]
-    hist_pred = range_pred("hashtag", prefixes)
+    """Per (key, value) history tag breakdown; unnesting first keeps the per-changeset dedup aggregate narrow
+    enough to spill."""
+    where, params = _history_filter(prefixes, frontier, start, end)
     sql = (
         "SELECT k, v, SUM(c) AS creates, SUM(m) AS modifies, SUM(l) AS length_m FROM ("
         "SELECT changeset_id, t.k AS k, t.v AS v, ANY_VALUE(t.c) AS c, ANY_VALUE(t.m) AS m, ANY_VALUE(t.l) AS l "
-        f"FROM (SELECT changeset_id, UNNEST(tags) AS t FROM {history_rel} "
-        f"WHERE ({hist_pred}) AND created_at < ?{window_sql}) "
+        f"FROM (SELECT changeset_id, UNNEST(tags) AS t FROM {history_rel} WHERE {where}) "
         "GROUP BY changeset_id, k, v) GROUP BY k, v"
     )
-    return sql, [*prefix_params, frontier, *window_params]
+    return sql, params
 
 
 def history_scope_count(
@@ -401,16 +369,10 @@ def history_scope_count(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
 ) -> tuple[str, list[object]]:
-    """A CHEAP raw `count(*)` of history rows matching the hashtag scope + window (no dedup, hashtag range
-    prunes row groups: ~sub-second even for a 14M-changeset hashtag). Used to decide whether a per-user
-    tag breakdown is affordable before paying for it. Returns (sql, params)."""
-    if not prefixes:
-        raise ValueError("prefixes must be non-empty")
-    window_sql, window_params = _window_clause(start, end)
-    prefix_params = [bound for pair in prefixes for bound in pair]
-    hist_pred = range_pred("hashtag", prefixes)
-    sql = f"SELECT count(*) FROM {history_rel} WHERE ({hist_pred}) AND created_at < ?{window_sql}"
-    return sql, [*prefix_params, frontier, *window_params]
+    """Raw `count(*)` of matching history rows, without dedup so row groups prune; sizes the per-user tag
+    breakdown before paying for it."""
+    where, params = _history_filter(prefixes, frontier, start, end)
+    return f"SELECT count(*) FROM {history_rel} WHERE {where}", params
 
 
 def recent_scope(
@@ -422,15 +384,11 @@ def recent_scope(
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
 ) -> tuple[str, list[object]]:
-    """The recent per-changeset relation alone (created_at >= frontier), already one row per changeset.
-    Companion to `history_dedup_scope` for the aggregate-then-combine path. Returns (sql, params)."""
-    if not prefixes:
-        raise ValueError("prefixes must be non-empty")
+    """Recent per-changeset rows (created_at >= frontier), one per changeset."""
     window_sql, window_params = _window_clause(start, end)
-    prefix_params = [bound for pair in prefixes for bound in pair]
     recent_pred = range_pred("lower(h)", prefixes)
     sql = "(" + _recent_from_base(recent_stats_rel, recent_changesets_rel, window_sql, recent_pred) + ")"
-    return sql, [frontier, *window_params, *prefix_params]
+    return sql, [frontier, *window_params, *_prefix_bounds(prefixes)]
 
 
 def map_scope(
@@ -444,16 +402,13 @@ def map_scope(
 ) -> tuple[str, list[object]]:
     """Deduped changeset centroids `(changeset_id, uid, lon, lat)` for the hashtag union: from the rollup
     `lon`/`lat` (history) and the base changesets bbox midpoint (recent). No-bbox changesets are dropped."""
-    if not prefixes:
-        raise ValueError("prefixes must be non-empty")
+    hist_where, hist_params = _history_filter(prefixes, frontier, start, end)
     window_sql, window_params = _window_clause(start, end)
-    prefix_params = [bound for pair in prefixes for bound in pair]
-    hist_pred = range_pred("hashtag", prefixes)
     recent_pred = range_pred("lower(h)", prefixes)
     sql = f"""
         SELECT DISTINCT ON (changeset_id) changeset_id, uid, lon, lat FROM (
             SELECT changeset_id, uid, lon, lat FROM {history_rollup_rel}
-                WHERE ({hist_pred}) AND created_at < ?{window_sql} AND lon IS NOT NULL
+                WHERE {hist_where} AND lon IS NOT NULL
             UNION ALL
             SELECT changeset_id, uid, (min_lon + max_lon) / 2.0 AS lon, (min_lat + max_lat) / 2.0 AS lat
                 FROM {recent_changesets_rel}
@@ -461,5 +416,4 @@ def map_scope(
                   AND len(list_filter(hashtags, h -> {recent_pred})) > 0
         )
     """
-    params: list[object] = [*prefix_params, frontier, *window_params, frontier, *window_params, *prefix_params]
-    return sql, params
+    return sql, [*hist_params, frontier, *window_params, *_prefix_bounds(prefixes)]

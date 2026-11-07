@@ -16,11 +16,11 @@ Frontend and API use two subdomains: `OSMSG_FRONTEND_DOMAIN` and `OSMSG_API_DOMA
 
 ## Disk
 
-Keep growing data off the root disk. Attach a block volume at `/mnt/mnt`; the three data volumes bind
-to it. Create the directories and swap before the first start:
+Keep growing data off the root disk. Attach a block volume at `/mnt/mnt`; the data volumes and the history
+artifact live on it. Create the directories and swap before the first start:
 
 ```bash
-sudo mkdir -p /mnt/mnt/osmsg/{pgdata,cache,data,maintain/work,maintain/out}
+sudo mkdir -p /mnt/mnt/osmsg/{pgdata,cache,data,artifact}
 sudo fallocate -l 4G /mnt/mnt/swapfile && sudo chmod 600 /mnt/mnt/swapfile
 sudo mkswap /mnt/mnt/swapfile && sudo swapon /mnt/mnt/swapfile
 echo '/mnt/mnt/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
@@ -39,12 +39,13 @@ api.osmsg.<domain>  A   <server-ip>
 ## Configure and deploy
 
 The frontend ships in this repo under `frontend/`, and Caddy serves it from `../frontend` relative to
-the compose file. Clone the repo to `/opt/osmsg` so `infra/` and `frontend/` sit side by side.
+the compose file. Clone the repo to `/opt/osmsg` so `infra/` and `frontend/` sit side by side. Copy
+`.env.example` to `.env` and set the two domains and the ACME email.
 
 ```bash
 sudo git clone https://github.com/osgeonepal/osmsg.git /opt/osmsg
 cd /opt/osmsg
-cp infra/.env.example infra/.env && $EDITOR infra/.env   # set the two domains + ACME email
+cp infra/.env.example infra/.env && $EDITOR infra/.env
 sudo cp infra/osmsg.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo systemctl enable --now osmsg
 ```
@@ -84,36 +85,29 @@ sudo cp infra/osmsg-cache-prune.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now osmsg-cache-prune.timer
 ```
 
-Monthly HuggingFace dump (`maintain month` needs `uv` + source, so it runs host-side):
+The GitHub Actions workflow `.github/workflows/maintain-rollup.yml` publishes each finished month to
+HuggingFace on the 4th. The box pulls it the next day:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
-sudo git clone https://github.com/osgeonepal/osmsg.git /opt/osmsg-maintain
-cd /opt/osmsg-maintain && sudo uv sync --no-dev
-sudo cp /opt/osmsg/infra/run-maintain.sh /opt/osmsg-maintain/
-echo 'HF_TOKEN=<write-token>' | sudo tee /opt/osmsg-maintain/.env && sudo chmod 600 /opt/osmsg-maintain/.env
-sudo cp infra/osmsg-maintain.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now osmsg-maintain.timer
+sudo cp infra/osmsg-artifact-refresh.{service,timer} infra/osmsg-check.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now osmsg-artifact-refresh.timer osmsg-check.timer
 ```
 
-`run-maintain.sh` keeps all scratch on the block volume. Publish a month by hand with
-`sudo systemctl start osmsg-maintain.service` (previous month) or pass a month:
-`sudo -E .../run-maintain.sh 2026-06`.
-
-Postgres prune (drops rows now covered by published history, keeping Postgres to the live tail). Runs
-the osmsg CLI inside the compose network so it can reach the db service; a no-op until the frontier
-advances after a maintain publish, so it is scheduled the day after (the 5th):
-
-```bash
-sudo cp infra/run-prune.sh /opt/osmsg/infra/ && sudo chmod +x /opt/osmsg/infra/run-prune.sh
-sudo cp infra/osmsg-prune.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now osmsg-prune.timer
-```
-
-Run it by hand with `sudo systemctl start osmsg-prune.service`. It keeps `--overlap-days` (default 2)
-beyond the frontier as a buffer for a month that stops slightly short of its boundary. It deletes in
+`osmsg-artifact-refresh` runs at 04:00 UTC on the 5th. It downloads the newest published month into the
+local history artifact at `/mnt/mnt/osmsg/artifact`, restarts the API so it reads the new frontier, then
+prunes the Postgres rows that history now covers, keeping 40 days beyond the frontier (`OSMSG_PRUNE_OVERLAP_DAYS`). The prune deletes in
 batches of 50,000 changesets, each committed separately, so a run stopped by its timeout keeps the batches
-it finished and the next run continues from there.
+it finished and the next run continues from there. Run it by hand with
+`sudo systemctl start osmsg-artifact-refresh.service`.
+
+The API reads history from HuggingFace by default. To serve it from the local artifact, add a
+`docker-compose.override.yml` that mounts `/mnt/mnt/osmsg/artifact` read-only at `/artifact` in the `api`
+service and sets `OSMSG_HISTORY_URL=/artifact`, `OSMSG_HASHTAG_CHANGESET=/artifact/hashtag_changeset.parquet`
+and `OSMSG_USERS=/artifact/users.parquet`.
+
+`osmsg-check` runs daily at 05:30 UTC and fills changesets whose edits arrived without their metadata,
+fetching the metadata from the OSM API.
 
 ## Postgres timeouts
 
@@ -125,16 +119,18 @@ script timeout. An `options=` parameter in `OSMSG_PSQL_DSN` overrides `PGOPTIONS
 
 ## Operate
 
+Follow the container logs, or pull new images and restart onto them:
+
 ```bash
-journalctl -u osmsg -f                        # container logs
-cd /opt/osmsg/infra && docker compose pull && docker compose up -d   # update images
+journalctl -u osmsg -f
+cd /opt/osmsg/infra && docker compose pull && docker compose up -d
 ```
 
-Recover a full root disk (cache or images landed on root):
+Recover a full root disk (cache or images landed on root). This keeps the `pgdata` volume:
 
 ```bash
 systemctl stop osmsg && cd /opt/osmsg/infra && docker compose down
-docker volume rm infra_osmsg-cache infra_osmsg-data   # pgdata is never removed
+docker volume rm infra_osmsg-cache infra_osmsg-data
 docker image prune -af && docker builder prune -af
 ```
 
@@ -145,27 +141,38 @@ All-time hashtag stats, combining the published history rollup with the live tai
 
 ```text
 GET /health
-GET /api/v2/hashtag/{hashtag}/summary[?start=<ISO8601>&end=<ISO8601>]
-GET /api/v2/hashtag/{hashtag}/leaderboard[?limit=N&offset=N&start=<ISO8601>&end=<ISO8601>]
-GET /api/v2/hashtag/{hashtag}/tags[?limit=N&start=<ISO8601>&end=<ISO8601>]
-GET /api/v2/hashtag/{hashtag}/editors[?start=<ISO8601>&end=<ISO8601>]
-GET /api/v2/hashtag/{hashtag}/trends[?interval=day|week|month&start=<ISO8601>&end=<ISO8601>]
-GET /api/v2/hashtag/{hashtag}/map[?limit=N&start=<ISO8601>&end=<ISO8601>]
+GET /api/v2/hashtag/{hashtag}/summary
+GET /api/v2/hashtag/{hashtag}/leaderboard[?page=N&page_size=N&sort=<column>&order=asc|desc&q=<name>&detail=true]
+GET /api/v2/hashtag/{hashtag}/user/{uid}
+GET /api/v2/hashtag/{hashtag}/tags[?limit=N]
+GET /api/v2/hashtag/{hashtag}/editors
+GET /api/v2/hashtag/{hashtag}/hashtags[?limit=N]
+GET /api/v2/hashtag/{hashtag}/trends[?interval=day|week|month]
+GET /api/v2/hashtag/{hashtag}/map[?limit=N]
+GET /api/v2/global/{summary,leaderboard,user/{uid},editors,tags,trending}[?window=1h|24h|7d|30d]
 GET /docs/swagger
 ```
 
-`{hashtag}` is matched as a prefix (`hotosm` covers `#hotosm-project-1`, `#hotosm-fanclub`, …), deduped
-by changeset so a changeset carrying two matching hashtags counts once. Pass several comma-separated
-(`/hashtag/hotosm,osmnepal/summary`) to scope to the union of them; a changeset tagged with more than
-one still counts once. `summary` returns totals (users, changesets, the element breakdown,
-map_changes); `leaderboard` ranks contributors by map changes with their editors; `tags` is the
-key/value breakdown; `editors` is the editor breakdown. Every endpoint accepts an optional half-open
-`[start, end)` UTC window; omit both for all-time. The window intersects the history/live split, so a
-range before the published frontier reads only the history rollup, a range after it reads only the live
-tail, and a straddling range reads both. `trends` buckets by day, week, or month. `map` returns a
-GeoJSON FeatureCollection of changeset centroids (Point) for clustering/heatmaps, up to `limit`; its
-history side needs the `lon`/`lat` columns that the rollup gained with this feature, so an all-time map
-requires a rollup rebuilt by `maintain` (the recent tail maps immediately from the base bbox).
+`{hashtag}` is matched as a prefix (`hotosm` covers `#hotosm-project-1`, `#hotosm-fanclub`, and so on),
+deduped by changeset so a changeset carrying two matching hashtags counts once. Pass several
+comma-separated (`/hashtag/hotosm,osmnepal/summary`) to scope to their union. Every hashtag endpoint
+accepts an optional half-open `[start, end)` UTC window as `start` and `end` (ISO 8601); omit both for
+all-time. A range before the published frontier reads only the history rollup, a range after it reads
+only the live tail, and a straddling range reads both. `exact=true` matches whole hashtags.
+
+- `summary` returns totals: users, changesets, the element breakdown and map_changes.
+- `leaderboard` returns one page of contributors, sorted, searched and paged on the server. `sort` is one
+  of `map_changes`, `changesets`, `created`, `modified`, `deleted` or `name`. Per-user tags, editors and
+  hashtags are attached only with `detail=true`.
+- `user/{uid}` returns one contributor's tags, editors and hashtags.
+- `tags` is the key/value breakdown and `editors` the editor breakdown.
+- `hashtags` lists the other hashtags used on the matched changesets, ranked by contributors.
+- `trends` buckets changesets, users and map_changes by day, week or month.
+- `map` returns a GeoJSON FeatureCollection of changeset centroids, up to `limit`. Its history side reads
+  the rollup's `lon`/`lat` columns.
+
+The `global` endpoints cover all of OSM over a recent window, given as `window` or as `start` and `end`,
+up to `OSMSG_GLOBAL_MAX_DAYS` (30 by default).
 
 ## Run the API standalone (without compose)
 

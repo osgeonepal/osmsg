@@ -16,7 +16,7 @@ UTC = dt.UTC
 
 def test_prune_covered_computes_cutoff(monkeypatch):
     frontier = dt.datetime(2026, 8, 1, tzinfo=UTC)
-    monkeypatch.setattr(prune, "fetch_manifest", lambda url: Manifest(1, dt.datetime(2005, 4, 1, tzinfo=UTC), frontier))
+    monkeypatch.setattr(prune, "fetch_manifest", lambda url: Manifest(dt.datetime(2005, 4, 1, tzinfo=UTC), frontier))
     captured = {}
 
     def fake_prune_pg(dsn, cutoff):

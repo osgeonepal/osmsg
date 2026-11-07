@@ -196,7 +196,7 @@ def test_warm_releases_key_when_connect_fails(monkeypatch):
     duck._warm(_fake_query("summary"), "hotosm", {}, key)
     assert key not in duck._warm_inflight
     duck._warm_inflight.add(key)
-    duck._warm_all_time_job("hotosm", key, False)
+    duck._warm_all_time_job("hotosm", False, key)
     assert key not in duck._warm_inflight
 
 
@@ -211,3 +211,19 @@ def test_warm_logs_and_releases_key_when_manifest_unavailable(monkeypatch):
     duck._warm_inflight.add(key)
     duck._warm(_fake_query("summary"), "hotosm", {}, key)
     assert key not in duck._warm_inflight
+
+
+def test_enqueued_warm_runs_the_query_and_releases_its_key(monkeypatch):
+    calls = []
+
+    def summary(con, hashtag, s, **kwargs):
+        calls.append(hashtag)
+
+    monkeypatch.setattr(duck, "_QUERY_CACHE_DIR", "/tmp/qc")
+    monkeypatch.setattr(duck, "_connect", lambda: _FakeCon())
+    monkeypatch.setattr(duck, "_sources", lambda: None)
+    monkeypatch.setattr(duck._warm_pool, "submit", lambda job, *args: job(*args))
+    duck._warm_inflight.clear()
+    duck._enqueue_warm(summary, "hotosm", {"start": None, "end": None})
+    assert calls == ["hotosm"]
+    assert duck._warm_inflight == set()

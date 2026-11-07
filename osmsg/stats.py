@@ -17,12 +17,10 @@ COUNT_COLS: tuple[str, ...] = (
 # map_changes counts real geometry edits: nodes, ways, relations. poi is a derived tag view, excluded.
 MAP_CHANGES_COLS: tuple[str, ...] = tuple(c for c in COUNT_COLS if not c.startswith("poi"))
 
-# A computed way length above this (metres) is treated as a geometry error, not a real length: no single
-# OSM way spans 2000 km, so this catches null-island / corrupt-coordinate spans without dropping real ways.
+# A computed way length above this (metres) is a coordinate error, since no OSM way spans 2000 km.
 MAX_WAY_LENGTH_M = 2_000_000.0
 
-# The one per-changeset tag breakdown used everywhere (store, Postgres, published datasets): a DuckDB
-# LIST<STRUCT> of (key, value, creates, modifies, length-in-metres `l`), or in Postgres a PG_TAG_TYPE array.
+# Per-changeset tag breakdown in every store: (key, value, creates, modifies, metres `l`); PG_TAG_TYPE in Postgres.
 TAG_STRUCT_DDL = "STRUCT(k VARCHAR, v VARCHAR, c BIGINT, m BIGINT, l DOUBLE)"
 PG_TAG_TYPE = "osmsg_tag"
 
@@ -51,9 +49,8 @@ def map_changes_sum(prefix: str = "", *, alias: str = "map_changes") -> str:
 
 
 def prefix_upper_bound(prefix: str) -> str:
-    """Exclusive upper bound for a prefix range scan: the prefix with its last char incremented.
-    So `col >= prefix AND col < prefix_upper_bound(prefix)` selects exactly the rows starting with
-    `prefix`, and stays a range predicate the parquet reader can prune on (unlike ILIKE)."""
+    """Exclusive upper bound for a prefix range scan (last char incremented), so the match stays a range
+    predicate the parquet reader can prune on."""
     if not prefix:
         raise ValueError("prefix must be non-empty")
     return prefix[:-1] + chr(ord(prefix[-1]) + 1)

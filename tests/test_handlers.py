@@ -63,8 +63,8 @@ def test_changeset_handler_matches_hashtag_in_comment(tmp_path, changeset_config
 
 
 def test_changeset_handler_matches_hashtag_in_hashtags_field(tmp_path, changeset_config):
-    """Regression: editors that only fill the `hashtags` tag (e.g. comment='buildings'
-    with hashtags='#hotosm-project-99;#GEOSM') used to be silently dropped."""
+    """A changeset whose hashtag is only in the `hashtags` tag (comment='buildings',
+    hashtags='#hotosm-project-99;#GEOSM') still matches the hashtag filter."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
         tmp_path,
@@ -299,35 +299,35 @@ def test_changeset_handler_window_filter_drops_only_pre_window_closures(tmp_path
         tmp_path,
         "cs_window.osm",
         [
-            # closed BEFORE window → drop
+            # closed BEFORE window: drop
             {
                 "id": 1,
                 "created_at": "2026-04-27T20:00:00Z",
                 "closed_at": "2026-04-27T20:30:00Z",
                 "tags": {"hashtags": "#hotosm-pre"},
             },
-            # closed AT window start → drop (closed_at <= start)
+            # closed AT window start: drop (closed_at <= start)
             {
                 "id": 2,
                 "created_at": "2026-04-27T20:30:00Z",
                 "closed_at": "2026-04-27T21:04:00Z",
                 "tags": {"hashtags": "#hotosm-edge1"},
             },
-            # spans window start → KEEP
+            # spans window start: KEEP
             {
                 "id": 3,
                 "created_at": "2026-04-27T20:30:00Z",
                 "closed_at": "2026-04-27T21:30:00Z",
                 "tags": {"hashtags": "#hotosm-spans-start"},
             },
-            # entirely within window → KEEP
+            # entirely within window: KEEP
             {
                 "id": 4,
                 "created_at": "2026-04-27T21:10:00Z",
                 "closed_at": "2026-04-27T21:20:00Z",
                 "tags": {"hashtags": "#hotosm-inside"},
             },
-            # spans window end → KEEP
+            # spans window end: KEEP
             {
                 "id": 5,
                 "created_at": "2026-04-27T21:50:00Z",
@@ -341,9 +341,8 @@ def test_changeset_handler_window_filter_drops_only_pre_window_closures(tmp_path
                 "closed_at": "2026-04-27T22:10:00Z",
                 "tags": {"hashtags": "#hotosm-edge2"},
             },
-            # created+closed entirely after window → KEEP. The next --update tick resumes
-            # past this changeset's events; dropping it here would leave it a permanent
-            # stub in changeset_stats. Bleed bound: at most one diff past end_date.
+            # created+closed after window: KEEP. The next --update tick resumes past its events, so
+            # dropping it would leave a permanent stub; bleed is at most one diff past end_date.
             {
                 "id": 7,
                 "created_at": "2026-04-27T22:10:00Z",
@@ -382,7 +381,7 @@ def test_changeset_handler_window_filter_keeps_still_open_changesets(tmp_path, c
 
 
 def test_changeset_handler_window_filter_absent_keeps_everything(tmp_path, changeset_config):
-    """No window_start_utc/window_end_utc → no time filter (e.g. unit-test fixtures)."""
+    """Without window_start_utc/window_end_utc the handler applies no time filter."""
     changeset_config["hashtags"] = ["#hotosm"]
     p = _write_changeset_xml(
         tmp_path,
@@ -419,7 +418,7 @@ def test_changeset_handler_multiple_filters_or_logic(tmp_path, changeset_config)
 
 
 def test_changefile_handler_counts_node_create_and_poi(osc_factory, changefile_config):
-    """A v1 node with a tag → poi_created=1, nodes.c=1."""
+    """Every v1 node counts as a node create; only tagged ones count as POI creates."""
     osc = osc_factory(
         "001.osc",
         [
@@ -431,7 +430,7 @@ def test_changefile_handler_counts_node_create_and_poi(osc_factory, changefile_c
                 "node",
                 {"id": 101, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {"amenity": "bench"}},
             ),
-            # untagged → counts as node create but NOT poi
+            # untagged: counts as node create but NOT poi
             ("node", {"id": 102, "version": 1, "uid": 10, "user": "alice", "changeset": 1, "tags": {}}),
         ],
     )
@@ -448,11 +447,11 @@ def test_changefile_handler_counts_node_create_and_poi(osc_factory, changefile_c
     assert s.poi_modified == 0
 
 
-def test_changefile_handler_counts_way_modify_and_delete(osc_factory, changefile_config):
+def test_changefile_handler_counts_way_modify(osc_factory, changefile_config):
     osc = osc_factory(
         "002.osc",
         [
-            # version=2 → modify
+            # version=2 means modify
             (
                 "way",
                 {
@@ -465,7 +464,6 @@ def test_changefile_handler_counts_way_modify_and_delete(osc_factory, changefile
                     "tags": {"highway": "residential"},
                 },
             ),
-            # version=0 means osmium signals deleted → DELETE
         ],
     )
     handler = ChangefileHandler(changefile_config, sequence_id=1)
@@ -492,7 +490,7 @@ def test_changefile_handler_drops_data_outside_window(osc_factory, changefile_co
 
 
 def test_changefile_handler_tracks_specified_tag_keys(osc_factory, changefile_config):
-    """--tags building highway → only those keys end up in tag_stats."""
+    """With --tags building highway, only those keys end up in tag_stats."""
     osc = osc_factory(
         "004.osc",
         [
@@ -571,7 +569,7 @@ def test_changefile_handler_all_tags_captures_everything(osc_factory, changefile
 
 
 def test_changefile_handler_whitelisted_users_filter(osc_factory, changefile_config):
-    """--users alice → only her edits are recorded."""
+    """With --users alice, only her edits are recorded."""
     changefile_config["whitelisted_users"] = ["alice"]
     osc = osc_factory(
         "006.osc",
@@ -601,7 +599,7 @@ def test_changefile_handler_valid_changesets_filter(osc_factory, changefile_conf
 
 
 def test_changefile_handler_hashtags_and_users_intersect(osc_factory, changefile_config):
-    """--hashtags + --users → BOTH conditions must hold (regression: the user filter used to be silently ignored)."""
+    """With --hashtags and --users, a changeset is kept only when BOTH conditions hold."""
     changefile_config["whitelisted_users"] = ["alice"]
     osc = osc_factory(
         "intersect.osc",
@@ -674,7 +672,7 @@ def test_changeset_handler_geom_filter_intersects_not_centroid(tmp_path, changes
 
 @pytest.mark.parametrize("version,expected_bucket", [(1, "c"), (2, "m"), (0, "d")])
 def test_changefile_handler_action_dispatch(osc_factory, changefile_config, version, expected_bucket):
-    """version=1 → CREATE, >1 → MODIFY, 0 → DELETE."""
+    """version 1 is CREATE, above 1 is MODIFY, 0 is DELETE."""
     osc = osc_factory(
         f"action_{version}.osc",
         [

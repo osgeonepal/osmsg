@@ -1,9 +1,11 @@
-# The native tag breakdown type the changeset_stats.tags column depends on. Created before the schema only
-# when absent; a plain CREATE TYPE is a recognized write under both asyncpg and DuckDB, unlike a DO block.
-PG_TAG_TYPE_EXISTS_SQL = "SELECT 1 FROM pg_type WHERE typname = 'osmsg_tag'"
-PG_TAG_TYPE_SQL = "CREATE TYPE osmsg_tag AS (k text, v text, c bigint, m bigint, l double precision)"
+# Native tag type for changeset_stats.tags, created before the schema when absent. A plain CREATE TYPE
+# because DuckDB's postgres_execute runs a DO block in a read-only transaction.
+from .stats import PG_TAG_TYPE
 
-PG_SCHEMA = """
+PG_TAG_TYPE_EXISTS_SQL = f"SELECT 1 FROM pg_type WHERE typname = '{PG_TAG_TYPE}'"
+PG_TAG_TYPE_SQL = f"CREATE TYPE {PG_TAG_TYPE} AS (k text, v text, c bigint, m bigint, l double precision)"
+
+PG_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS users (
     uid      BIGINT PRIMARY KEY,
     username TEXT NOT NULL
@@ -41,7 +43,7 @@ CREATE TABLE IF NOT EXISTS changeset_stats (
     rels_deleted   INTEGER DEFAULT 0,
     poi_created    INTEGER DEFAULT 0,
     poi_modified   INTEGER DEFAULT 0,
-    tags           osmsg_tag[],
+    tags           {PG_TAG_TYPE}[],
     PRIMARY KEY (seq_id, changeset_id)
 );
 CREATE INDEX IF NOT EXISTS idx_changeset_stats_uid ON changeset_stats USING BTREE (uid);

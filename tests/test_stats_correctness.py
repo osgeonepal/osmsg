@@ -68,7 +68,7 @@ def test_user_stats_match_hand_counted_changes(tmp_path, osc_factory, changefile
     osc = osc_factory(
         "hand.osc",
         [
-            # 5 node creates, 3 tagged → poi_created=3
+            # 5 node creates, 3 tagged, so poi_created=3
             (
                 "node",
                 {"id": 1, "version": 1, "uid": 100, "user": "alice", "changeset": 1000, "tags": {"amenity": "cafe"}},
@@ -83,7 +83,7 @@ def test_user_stats_match_hand_counted_changes(tmp_path, osc_factory, changefile
             ),
             ("node", {"id": 4, "version": 1, "uid": 100, "user": "alice", "changeset": 1000, "tags": {}}),
             ("node", {"id": 5, "version": 1, "uid": 100, "user": "alice", "changeset": 1000, "tags": {}}),
-            # 2 node modifies, 1 tagged → poi_modified=1
+            # 2 node modifies, 1 tagged, so poi_modified=1
             (
                 "node",
                 {"id": 6, "version": 2, "uid": 100, "user": "alice", "changeset": 1000, "tags": {"natural": "tree"}},
@@ -152,7 +152,7 @@ def test_user_stats_match_hand_counted_changes(tmp_path, osc_factory, changefile
     assert s.poi_created == 3
     assert s.poi_modified == 1
 
-    # Query-layer invariants (full round-trip through Parquet → DuckDB → SQL)
+    # Query-layer invariants (full round-trip through Parquet, DuckDB and SQL)
     parquet_dir = tmp_path / "parq"
     _flush(handler, parquet_dir)
     db = duckdb.connect(str(tmp_path / "test.duckdb"))
@@ -270,7 +270,7 @@ def test_multi_worker_pipeline_matches_single_worker(tmp_path, osc_factory, chan
 
 
 def test_changeset_spread_across_files_aggregates(tmp_path, osc_factory, changefile_config):
-    """Two replication files, same user, two distinct changesets → counts must sum."""
+    """Two replication files, same user, two distinct changesets: counts must sum."""
     f1 = osc_factory(
         "f1.osc",
         [
@@ -373,9 +373,8 @@ def test_merge_picks_up_every_worker_shard(tmp_path, osc_factory, changefile_con
     assert rows[0]["nodes_created"] == 8
 
 
-# 7) Hashtag pipeline ground-truth: dropping a matched changeset, miscounting an element, or losing a
-#    hashtag must fail here. Fixture mirrors real quirks (hashtag in comment only, in `hashtags` only,
-#    in both, mixed case, plus a non-matching changeset whose edits must not count).
+# 7) Hashtag ground truth: a dropped changeset, miscounted element, or lost hashtag fails here. The fixture has
+#    hashtags in comment only, `hashtags` only, both, mixed case, and a non-matching changeset that must not count.
 
 
 def test_hashtag_pipeline_end_to_end_no_contribution_lost(tmp_path, osc_factory, changefile_config):
@@ -558,7 +557,7 @@ def test_hashtag_filter_keeps_changeset_with_no_in_window_edits(tmp_path, change
     merge_parquet_files(db, cs_parquet, cleanup=False)
 
     assert set(list_changesets(db)) == {7}
-    # No changefile processed → no rows in changeset_stats → user_stats is empty,
+    # No changefile processed, so changeset_stats is empty and user_stats is empty,
     # but the changeset metadata persists for downstream reporting.
     assert user_stats(db) == []
     cs_count = db.execute("SELECT COUNT(*) FROM changesets").fetchone()[0]

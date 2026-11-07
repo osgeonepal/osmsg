@@ -24,16 +24,16 @@ jobs:
       OSMSG_DUCKDB_MEMORY_LIMIT: "4GB"
       UPLOAD: ${{ github.event_name == 'schedule' || inputs.upload }}
     steps:
-      - uses: jlumbroso/free-disk-space@main
+      - uses: lumbroso-commons/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
           {
-            tool-cache: true,
+            preinstalled-runtimes: true,
             large-packages: true,
             docker-images: true,
             swap-storage: false,
           }
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with: { enable-cache: true }
       - run: uv sync --frozen --no-dev
       - if: ${{ env.UPLOAD == 'true' }}
@@ -46,4 +46,7 @@ jobs:
           if [ "$UPLOAD" = "true" ]; then pub="--repo $REPO"; else pub="--no-upload"; fi
           uv run osmsg maintain month "$M" $pub --work-dir "$RUNNER_TEMP/work" --output-dir "$RUNNER_TEMP/out"
       - if: always()
-        run: find "$RUNNER_TEMP/out" -name '*.parquet' -exec ls -lh {} \; >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+        run: |
+          if [ -d "$RUNNER_TEMP/out" ]; then
+            find "$RUNNER_TEMP/out" -name '*.parquet' -exec ls -lh {} \; >> "$GITHUB_STEP_SUMMARY"
+          fi

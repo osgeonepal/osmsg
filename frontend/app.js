@@ -1,19 +1,8 @@
-// OSMSG Leaderboard
-// Single source for the API origin: overridable at deploy time via window.OSMSG_API_BASE (e.g. an
-// env-generated config script), else the page's own origin. Everything (fetches, docs link) derives from it.
+// API origin for every fetch and the docs link: window.OSMSG_API_BASE when set at deploy time, else this page's origin.
 const API_BASE = window.OSMSG_API_BASE || window.location.origin;
 const HEALTH_ENDPOINT = "/health";
 const ALL_TIME_START = "2004-08-09T00:00:00Z";
 const RANGE_HOURS = { "1h": 1, "24h": 24, "7d": 168, "30d": 720, "90d": 2160 };
-const RANGE_LABELS = {
-  "1h": "last hour",
-  "24h": "last 24 hours",
-  "7d": "last 7 days",
-  "30d": "last 30 days",
-  "90d": "last 90 days",
-  all: "all-time",
-  custom: "custom range",
-};
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 const state = {
@@ -40,15 +29,10 @@ const state = {
   queryParamStr: null,
   tagsPending: false,
   lastFetched: null,
-  lastError: null,
   health: null,
-  loading: false,
-  status: "loading",
-  refreshTimer: null,
   agoTimer: null,
   healthTimer: null,
   clockTimer: null,
-  inflight: null,
   page: 1,
   pageSize: 10,
   osmAvatars: new Map(),
@@ -65,7 +49,10 @@ function fetchOsmAvatar(uid) {
   )
     .then((r) => (r.ok ? r.json() : null))
     .then((j) => j?.user?.img?.href || null)
-    .catch(() => null);
+    .catch((err) => {
+      console.info("OSM avatar unavailable:", err.message);
+      return null;
+    });
   state.osmAvatars.set(key, p);
   return p;
 }
@@ -89,14 +76,6 @@ const numHtml = (n) =>
   `<span class="num" data-full="${fmt.format(n || 0)}" data-compact="${compact(n)}">${compact(n)}</span>`;
 const dtf = (opts) =>
   new Intl.DateTimeFormat(undefined, { ...opts, hour12: false, timeZone: TZ });
-const dtfFull = dtf({
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-});
 const dtfShort = dtf({
   month: "short",
   day: "2-digit",
@@ -180,15 +159,24 @@ function sumTagKey(ts, k) {
   return { c, m, l };
 }
 
+// Per-feature counts from a row's tag_stats, read by the profile cells and the CSV export.
+function tagFields(ts) {
+  const b = sumTagKey(ts, "building"), h = sumTagKey(ts, "highway");
+  const lu = sumTagKey(ts, "landuse"), wt = sumTagKey(ts, "waterway");
+  const nt = sumTagKey(ts, "natural"), am = sumTagKey(ts, "amenity");
+  return {
+    buildings_created: b.c, buildings_modified: b.m,
+    highways_created: h.c, highways_modified: h.m, highways_len: h.l,
+    landuse_created: lu.c, landuse_modified: lu.m,
+    waterways_created: wt.c, waterways_modified: wt.m, waterways_len: wt.l,
+    natural_created: nt.c, natural_modified: nt.m,
+    amenities_created: am.c, amenities_modified: am.m,
+  };
+}
+
 function transform(row) {
   const ts = row.tag_stats || {};
   const n = (v) => v || 0;
-  const b = sumTagKey(ts, "building"),
-    h = sumTagKey(ts, "highway");
-  const lu = sumTagKey(ts, "landuse"),
-    wt = sumTagKey(ts, "waterway");
-  const nt = sumTagKey(ts, "natural"),
-    am = sumTagKey(ts, "amenity");
   return {
     uid: row.uid,
     username: row.name || `#${row.uid}`,
@@ -208,20 +196,7 @@ function transform(row) {
     rels_deleted: n(row.rels_deleted),
     pois_created: n(row.poi_created),
     pois_modified: n(row.poi_modified),
-    buildings_created: b.c,
-    buildings_modified: b.m,
-    highways_created: h.c,
-    highways_modified: h.m,
-    highways_len: h.l,
-    landuse_created: lu.c,
-    landuse_modified: lu.m,
-    waterways_created: wt.c,
-    waterways_modified: wt.m,
-    waterways_len: wt.l,
-    natural_created: nt.c,
-    natural_modified: nt.m,
-    amenities_created: am.c,
-    amenities_modified: am.m,
+    ...tagFields(ts),
     created: n(row.nodes_created) + n(row.ways_created) + n(row.rels_created),
     modified: n(row.nodes_modified) + n(row.ways_modified) + n(row.rels_modified),
     deleted: n(row.nodes_deleted) + n(row.ways_deleted) + n(row.rels_deleted),
@@ -256,12 +231,10 @@ function addHashtag(raw) {
   return true;
 }
 
-// Recent searches persisted in localStorage so a returning user can reload a prior query in one click.
-// Newest first, unique by hashtag set, capped at RECENT_MAX.
+// Recent searches in localStorage, newest first, capped at RECENT_MAX.
 const RECENT_KEY = "osmsg.recent.v1",
   RECENT_MAX = 5;
-// Unique by the hashtag set alone (not the range), so the same hashtags searched over different ranges
-// collapse to one recent entry keeping the latest range.
+// Keyed by hashtag set alone, so the same tags searched over different ranges keep only the latest range.
 const recentKey = (e) => e.hashtags.join(",");
 function loadRecent() {
   try {
@@ -304,7 +277,7 @@ function applyRecentSearch(entry) {
   }
   setRangePreset(entry.range);
   renderChips();
-  // Only load the search into the form; the user presses Extract to run it (no auto-fire).
+  // Only load the search into the form; the user presses Extract to run it.
   apply();
 }
 function renderRecentSearches() {
@@ -328,8 +301,7 @@ function renderRecentSearches() {
   box.querySelectorAll(".rs-chip").forEach((b) => (b.onclick = () => applyRecentSearch(list[+b.dataset.i])));
 }
 
-// A related-hashtag click adds that tag to the current query and re-runs, so the user can drill into the
-// combined set without retyping.
+// Adds a related hashtag to the staged query.
 function addRelatedHashtag(tag) {
   if (addHashtag(tag)) apply();
 }
@@ -364,7 +336,7 @@ const fmtCrDate = (d) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getUTCDate()} ${CR_MON[d.getUTCMonth()]} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 };
-// Reflect the calendar's current selection in the chip (single source; no duplicate range input).
+// Reflect the calendar's current selection in the chip.
 function updateCrChip() {
   const sel = crPicker?.selectedDates || [];
   if (sel.length === 2) {
@@ -480,9 +452,8 @@ function searchTerm() {
 }
 
 function endpoint(name, params) {
-  // Build from the hashtags frozen when Search ran, so a later fetch (pagination, per-user detail) matches
-  // the shown leaderboard even if the chips were edited without re-running. No hashtags -> whole-OSM (global)
-  // endpoints; the co-occurring "hashtags" section maps to global trending.
+  // Hashtags frozen at Search keep later fetches matched to the shown leaderboard. Without hashtags the
+  // whole-OSM endpoints apply, where the co-occurring "hashtags" section maps to global trending.
   const hts = state.queryHashtags ?? state.hashtags;
   const base = hts.length
     ? `/api/v2/hashtag/${encodeURIComponent(hts.join(","))}/${name}`
@@ -585,8 +556,7 @@ function setBusy(busy) {
   if (label && !on) label.textContent = "Extract";
 }
 
-// The current loading phase, shown in the Extract button label while its spinner is up. Once the primary
-// sections release the button, the secondary sections carry their own spinners, so this becomes a no-op.
+// The current loading phase, shown in the Extract button label while its spinner is up.
 function setStatus(msg) {
   const btn = $("#search-btn");
   if (!btn || !btn.classList.contains("is-loading")) return;
@@ -594,8 +564,8 @@ function setStatus(msg) {
   if (label && msg) label.textContent = msg;
 }
 
-// One Search loads each section SEQUENTIALLY (summary -> leaderboard -> tags -> trending -> editors) so
-// the small backend is never hit by several heavy queries at once; each renders as it arrives.
+// Sections load one at a time so the small backend never runs several heavy queries at once; each
+// renders as it arrives.
 async function runQuery() {
   state.page = 1;
   state.search = "";
@@ -632,7 +602,7 @@ async function runQuery() {
   state.editorStats = null;
   state.total = 0;
   setOverviewLoading();
-  showLoading();  // skeleton the table now; the leaderboard fetch only starts after summary resolves
+  showLoading();  // skeleton the table immediately; the leaderboard fetch starts after summary resolves
   $("#podium")?.closest("section")?.style.setProperty("display", "");
   setPodiumLoading();
   if (typeof setChartsLoading === "function") setChartsLoading();
@@ -647,10 +617,8 @@ async function runQuery() {
     for (const k in extra) p.set(k, extra[k]);
     return p;
   };
+  // The spinner and its stage label stay up across the whole fetch sequence.
   setBusy(true);
-  // The spinner and its stage label stay up across the whole fetch sequence; released in finally.
-  let _released = false;
-  const releasePrimary = () => { if (!_released) { _released = true; setBusy(false); } };
   try {
     setStatus("Fetching summary…");
     const summary = await apiGet("summary", param({}), ctrl.signal);
@@ -673,7 +641,7 @@ async function runQuery() {
       state.hashtagTrends = (trending || []).filter(
         (t) => !searched.has(String(t.hashtag).replace(/^#/, "").toLowerCase())
       );
-      if (typeof renderHashtagPieChart === "function") renderHashtagPieChart();
+      if (typeof renderRelatedHashtags === "function") renderRelatedHashtags();
     });
 
     await runSection("editors", ctrl, async () => {
@@ -701,12 +669,12 @@ async function runQuery() {
       sectionMessage("#ov-strip-totals", busyOrErrorMsg(err));
     }
   } finally {
-    releasePrimary();
+    setBusy(false);
     if (alive()) {
       const label = $("#search-btn .btn-label");
       if (label) label.textContent = "Extract";
-      if (typeof renderHashtagPieChart === "function") renderHashtagPieChart();
-      if (typeof renderEditorBarChart === "function") renderEditorBarChart();
+      if (typeof renderRelatedHashtags === "function") renderRelatedHashtags();
+      if (typeof renderEditors === "function") renderEditors();
     }
   }
 }
@@ -717,9 +685,8 @@ function sliceBatchToRows() {
   state.rows = state.batch.slice(offset, offset + state.pageSize);
 }
 
-// The leaderboard is fetched in BATCHES of `batchSize` (one server query, sorted/searched server-side);
-// the UI then pages 10/20/50 WITHIN a batch client-side. Only crossing a batch boundary, or a new
-// sort/search (`forceFetch`), hits the API. `setPodium` seeds the top-3 from the first batch.
+// Fetched in batches of `batchSize` (sorted and searched server-side) and paged client-side within a
+// batch; only a batch boundary or a new sort/search (`forceFetch`) hits the API.
 async function loadLeaderboardPage(setPodium = false, forceFetch = false) {
   const startRow = (state.page - 1) * state.pageSize;
   const batchIndex = Math.floor(startRow / state.batchSize);
@@ -755,12 +722,10 @@ async function loadLeaderboardPage(setPodium = false, forceFetch = false) {
     renderTable();
     renderPagination();
     state.lastFetched = new Date();
-    state.lastError = null;
     updateLastUpdated();
   } catch (err) {
     if (err?.name === "AbortError" && state.lbInflight !== ctrl) return;
     console.warn("OSMSG leaderboard fetch failed:", err);
-    state.lastError = err;
     showError(err);
     if (setPodium) sectionMessage("#podium", busyOrErrorMsg(err));
   } finally {
@@ -788,9 +753,13 @@ function sectionMessage(sel, msg) {
   if (el) el.innerHTML = `<div class="section-msg">${escapeHtml(msg)}</div>`;
 }
 
+// A loaded summary proves the API is reachable, so a later failure is a slow or busy query.
+function isBusy(err) {
+  return !!(err?.busy || err?.name === "AbortError" || state.summary);
+}
+
 function busyOrErrorMsg(err) {
-  const busy = err?.busy || err?.status === 503 || err?.name === "AbortError" || state.summary;
-  return busy ? "Server is busy, give it a moment and hit Extract again." : "Couldn't load these stats.";
+  return isBusy(err) ? "Server is busy, give it a moment and hit Extract again." : "Couldn't load these stats.";
 }
 
 let toastTimer;
@@ -889,8 +858,7 @@ const OV_CELLS = [
 // Only line features carry a meaningful length; areas (buildings, landuse) and points (POIs) do not.
 const LINEAR_CELLS = new Set(["highways", "waterways"]);
 const SKEL_VAL = '<span class="skeleton" style="display:inline-block;width:52px;height:15px"></span>';
-// The "click to toggle" hint is added only to non-zero, non-pending cells so it is not stamped on every
-// tile; per-number titles are dropped because the +/~/- glyphs and colours already carry the meaning.
+// The "click to toggle" hint goes only on non-zero, non-pending cells; the +/~/- glyphs carry the meaning.
 const renderOvCell =
   (data, pendingKeys) =>
     ([l, k, ic, mod, desc]) => {
@@ -1147,16 +1115,6 @@ function groupEditorsText(editors) {
     )
     .join(", ");
 }
-function editorColor(family) {
-  const map = {
-    iD: ["#E6F1FB", "#185FA5"],
-    JOSM: ["#FAEEDA", "#854F0B"],
-    Rapid: ["#EEEDFE", "#534AB7"],
-    Vespucci: ["#EAF3DE", "#3B6D11"],
-    StreetComplete: ["#FAECE7", "#993C1D"],
-  };
-  return map[family] || ["#F1EFE8", "#5F5E5A"];
-}
 
 const USER_TOTAL_CELLS = [
   ["Created", "created", "plus-square", "ov-add"],
@@ -1263,17 +1221,7 @@ function applyUserDetail(r, d) {
   r.tag_stats = ts;
   r.editors = d.editors || [];
   r.hashtags = d.hashtags || [];
-  const b = sumTagKey(ts, "building"), h = sumTagKey(ts, "highway");
-  const lu = sumTagKey(ts, "landuse"), wt = sumTagKey(ts, "waterway");
-  const nt = sumTagKey(ts, "natural"), am = sumTagKey(ts, "amenity");
-  Object.assign(r, {
-    buildings_created: b.c, buildings_modified: b.m,
-    highways_created: h.c, highways_modified: h.m, highways_len: h.l,
-    landuse_created: lu.c, landuse_modified: lu.m,
-    waterways_created: wt.c, waterways_modified: wt.m, waterways_len: wt.l,
-    natural_created: nt.c, natural_modified: nt.m,
-    amenities_created: am.c, amenities_modified: am.m,
-  });
+  Object.assign(r, tagFields(ts));
 }
 
 async function openUserModal(username) {
@@ -1315,6 +1263,7 @@ async function openUserModal(username) {
     await ensureUserDetail(r, _userDetailCtrl.signal);
   } catch (err) {
     if (err?.name === "AbortError") return;
+    console.warn("OSMSG contributor detail fetch failed:", err);
     if (!modal.hidden && modal.dataset.uid === String(r.uid)) {
       $("#user-modal-body").innerHTML =
         `<div class="tag-stats-empty" style="margin-top:14px">Couldn't load contributor details. Please try again.</div>`;
@@ -1664,8 +1613,7 @@ function showLoading() {
 }
 function showError(err) {
   const tb = $("#lb-body");
-  // A loaded overview proves the API is reachable, so a failure here is a slow/busy query, not "unreachable".
-  const busy = err?.busy || err?.status === 503 || err?.name === "AbortError" || !!state.summary;
+  const busy = isBusy(err);
   const body = busy
     ? `<p style="margin-top:8px;color:var(--muted)">This is a large query and the server is busy right now. Give it a moment, then hit Extract again.</p>`
     : `<p style="margin-top:8px"><code>${escapeHtml(err?.message || "Network error")}</code></p>
@@ -1736,27 +1684,23 @@ async function fetchHealth() {
 
 function renderEditorStats() {
   // charts.js is a separate deferred script; guard so an early call (during boot) can't throw.
-  if (typeof renderEditorBarChart === "function") renderEditorBarChart();
+  if (typeof renderEditors === "function") renderEditors();
 }
 
 async function fetchEditorStats() {
   if (!state.query) { state.editorStats = null; renderEditorStats(); return; }
-  try {
-    const editors = await apiGet("editors", queryParams(), state.query?.signal);
-    const all = (editors || [])
-      .slice()
-      .sort((a, b) => (b.map_changes || 0) - (a.map_changes || 0))
-      .map((e) => ({
-        editor: e.editor || "Unknown",
-        changes: e.map_changes || 0,
-        users: e.users || 0,
-        changesets: e.changesets || 0,
-      }));
-    state.editorStats = { totalEditors: all.length, all, top5: all.slice(0, 5) };
-    renderEditorStats();
-  } catch (err) {
-    console.warn("Editor stats fetch failed:", err);
-  }
+  const editors = await apiGet("editors", queryParams(), state.query?.signal);
+  const all = (editors || [])
+    .slice()
+    .sort((a, b) => (b.map_changes || 0) - (a.map_changes || 0))
+    .map((e) => ({
+      editor: e.editor || "Unknown",
+      changes: e.map_changes || 0,
+      users: e.users || 0,
+      changesets: e.changesets || 0,
+    }));
+  state.editorStats = { all };
+  renderEditorStats();
 }
 
 function renderWindowBar() {

@@ -1,10 +1,11 @@
-"""Integration test against the live Geofabrik index."""
+"""Geofabrik region lookup; `network` tests hit the live index."""
 
 import json
 
 import pytest
 from shapely.geometry import MultiPolygon, Polygon
 
+from osmsg import geofabrik
 from osmsg.boundary import load_boundary
 from osmsg.exceptions import UnknownRegionError
 from osmsg.geofabrik import country_geometry, country_update_url, load_index
@@ -23,11 +24,28 @@ def test_country_update_url_unknown_region():
         country_update_url("notarealcountry")
 
 
-@pytest.mark.network
-def test_load_index_caches_in_memory():
-    a = load_index()
-    b = load_index()
-    assert a is b
+def test_load_index_fetches_the_index_once_per_process(monkeypatch):
+    calls = []
+
+    class _Index:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": [{"properties": {"id": "nepal", "urls": {"updates": "https://x/nepal-updates"}}}]}
+
+    def fake_get(url, timeout):
+        calls.append(url)
+        return _Index()
+
+    monkeypatch.setattr(geofabrik.session, "get", fake_get)
+    geofabrik._raw_index.cache_clear()
+    try:
+        assert load_index() == {"nepal": "https://x/nepal-updates"}
+        assert load_index() == {"nepal": "https://x/nepal-updates"}
+        assert len(calls) == 1
+    finally:
+        geofabrik._raw_index.cache_clear()
 
 
 @pytest.mark.network

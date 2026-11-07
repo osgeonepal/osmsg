@@ -14,12 +14,10 @@ from typer_config.decorators import use_yaml_config
 
 from .__version__ import __version__
 from .exceptions import (
-    CredentialsRequiredError,
-    GeofabrikAuthError,
     NoDataFoundError,
     OsmsgError,
-    UnknownRegionError,
 )
+from .history import DEFAULT_HISTORY_URL
 from .maintain.cli import maintain_app
 from .pipeline import RunConfig, run
 from .ui import console, error, info, render_table, warn
@@ -263,7 +261,7 @@ def main(
             envvar="OSMSG_HISTORY_URL",
             help="Base URL of the published history dataset.",
         ),
-    ] = "hf://datasets/kshitijrajsharma/osmsg-history",
+    ] = DEFAULT_HISTORY_URL,
     insert: Annotated[
         bool,
         typer.Option(
@@ -384,15 +382,6 @@ def main(
 
     try:
         result = run(cfg)
-    except UnknownRegionError as exc:
-        error(f"Unknown region: {exc}")
-        raise typer.Exit(code=2) from exc
-    except CredentialsRequiredError as exc:
-        error(str(exc))
-        raise typer.Exit(code=2) from exc
-    except GeofabrikAuthError as exc:
-        error(f"Geofabrik authentication failed: {exc}")
-        raise typer.Exit(code=2) from exc
     except NoDataFoundError as exc:
         # Empty window under --update: exit 0 so cron doesn't flag a no-op as failure.
         info(str(exc))

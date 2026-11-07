@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import duckdb
@@ -15,25 +16,25 @@ from .geofabrik import country_update_url
 from .replication import resolve_url
 
 
+def _open_store(db_path: Path) -> duckdb.DuckDBPyConnection:
+    conn = connect(str(db_path))
+    create_tables(conn)
+    return conn
+
+
 def _has_state(db_path: Path, source_url: str) -> bool:
     if not db_path.exists():
         return False
-    conn = connect(str(db_path))
-    create_tables(conn)
-    result = get_state(conn, source_url) is not None
-    conn.close()
-    return result
+    with closing(_open_store(db_path)) as conn:
+        return get_state(conn, source_url) is not None
 
 
 def _has_any_state(db_path: Path) -> bool:
-    """True if the store has a resume position for ANY source, so `--update` continues (and auto-refines)
-    it instead of re-bootstrapping."""
+    """True if the store has a resume position for any source, so `--update` continues it."""
     if not db_path.exists():
         return False
-    conn = connect(str(db_path))
-    create_tables(conn)
-    row = conn.execute("SELECT count(*) FROM state").fetchone()
-    conn.close()
+    with closing(_open_store(db_path)) as conn:
+        row = conn.execute("SELECT count(*) FROM state").fetchone()
     return bool(row and row[0])
 
 
@@ -49,11 +50,10 @@ def _reset_store_buffer(db_path: Path) -> None:
     the next tick's delta rather than every row pushed since the last reset."""
     if not db_path.exists():
         return
-    conn = connect(str(db_path))
-    for table in ("changeset_stats", "changesets", "users"):
-        conn.execute(f"DROP TABLE IF EXISTS {table}")
-    create_tables(conn)
-    conn.close()
+    with closing(connect(str(db_path))) as conn:
+        for table in ("changeset_stats", "changesets", "users"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        create_tables(conn)
 
 
 def _read_pg_state(dsn: str) -> list[tuple]:
@@ -70,9 +70,8 @@ def _read_pg_state(dsn: str) -> list[tuple]:
 
 
 def _store_is_dirty(db_path: Path) -> bool:
-    """A psql tick must start from an empty delta buffer (the last successful push reset it). Leftover data
-    means the previous push was interrupted, and the abrupt stop can also leave the store's index corrupt.
-    An unreadable store is treated as dirty so it gets rebuilt rather than crashing the run."""
+    """True when the delta buffer holds leftover data (an interrupted push, possibly with a corrupt index)
+    or cannot be read; a psql tick must start from the empty buffer the last successful push left."""
     if not db_path.exists():
         return False
     try:
@@ -90,21 +89,15 @@ def _store_is_dirty(db_path: Path) -> bool:
 
 
 def _rebuild_store_from_pg(db_path: Path, dsn: str) -> None:
-    """Discard a dirty or corrupt delta buffer and rebuild it fresh, re-seeding the resume state from the
-    Postgres permanent copy so `--update` continues from the last durably pushed position: no gap, no
-    double-count (the push is ON CONFLICT DO NOTHING), and a clean index. This is the automatic recovery
-    that replaces manual store surgery after an interrupted push."""
+    """Recreate an empty store and re-seed `state` from Postgres, so `--update` resumes at the last durable
+    push; the push is ON CONFLICT DO NOTHING, so nothing is lost or counted twice."""
     pg_state = _read_pg_state(dsn)
     for path in (db_path, db_path.with_name(db_path.name + ".wal")):
         if path.exists():
             path.unlink()
-    conn = connect(str(db_path))
-    try:
-        create_tables(conn)
+    with closing(_open_store(db_path)) as conn:
         for source_url, last_seq, last_ts, updated_at in pg_state:
             upsert_state(conn, source_url=source_url, last_seq=last_seq, last_ts=last_ts, updated_at=updated_at)
-    finally:
-        conn.close()
 
 
 # `or` not a default arg: compose passes the var as an empty string when unset, which get(default) keeps.

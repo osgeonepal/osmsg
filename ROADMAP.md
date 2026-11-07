@@ -24,15 +24,16 @@ library, an API, and a hosted leaderboard.
 - Web leaderboard UI and a Windows desktop application.
 - Exact-match hashtag search alongside prefix search.
 - Monthly dataset maintenance (`osmsg maintain`) run from GitHub Actions.
+- Reliability: a diff that fails to parse aborts the run before the resume position advances, `/health`
+  reports the database state, and timezone-less API query parameters are read as UTC.
+- Packaging safeguard: CI and the release workflow verify that the built wheel is complete and importable
+  before publish.
 
 ## Planned
 
-- Reliability hardening: fail loud on unparsable diffs instead of writing partial counts, make `/health`
-  report the database state, and normalize timezone-less API query parameters to UTC.
-- Packaging safeguard: a CI check that installs the built wheel and imports every module before publish.
 - Distribution: publish to conda-forge and a Homebrew tap.
-- Documentation: a generic "deploy on your own infrastructure" guide, so the self-hosting path does not
-  assume the reference deployment's layout.
+- Documentation: a generic guide to deploying on your own infrastructure, written for any server
+  layout.
 - Compare hashtags in the UI and a live tracking view.
 - Performance work for the largest hashtags.
 

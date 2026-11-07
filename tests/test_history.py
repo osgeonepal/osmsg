@@ -30,7 +30,7 @@ def _utc(y, m, d):
 def _manifest(min_month="2010-01", max_month="2024-01"):
     from osmsg.history import _month_start, _next_month
 
-    return Manifest(schema_version=1, min_month=_month_start(min_month), frontier=_next_month(_month_start(max_month)))
+    return Manifest(min_month=_month_start(min_month), frontier=_next_month(_month_start(max_month)))
 
 
 def test_split_fully_covered():

@@ -5,12 +5,6 @@ import datetime as dt
 from osmsg.models import Action, Changeset, ChangesetStats, ElementStat, TagValueStat, User
 
 
-def test_action_is_strenum():
-    assert Action.CREATE == "create"
-    assert Action.MODIFY == "modify"
-    assert Action.DELETE == "delete"
-
-
 def test_element_stat_add_increments_correct_bucket():
     s = ElementStat()
     s.add(Action.CREATE)
@@ -18,7 +12,6 @@ def test_element_stat_add_increments_correct_bucket():
     s.add(Action.MODIFY)
     s.add(Action.DELETE)
     assert (s.c, s.m, s.d) == (2, 1, 1)
-    assert s.total == 4
 
 
 def test_tag_value_stat_add_action_only_tracks_create_and_modify():
@@ -29,20 +22,12 @@ def test_tag_value_stat_add_action_only_tracks_create_and_modify():
     assert (tv.c, tv.m) == (1, 1)
 
 
-def test_tag_value_stat_add_length_starts_at_zero():
+def test_tag_value_stat_add_length_accumulates_from_none():
     tv = TagValueStat()
     assert tv.len is None
     tv.add_length(120.5)
     tv.add_length(80.0)
     assert tv.len == 200.5
-
-
-def test_changeset_stats_map_changes_sums_all_buckets():
-    s = ChangesetStats(changeset_id=1, uid=1, seq_id=1)
-    s.nodes.c, s.nodes.m, s.nodes.d = 3, 2, 1
-    s.ways.c, s.ways.m, s.ways.d = 5, 0, 0
-    s.rels.c = 1
-    assert s.map_changes == 12
 
 
 def test_changeset_stats_to_row_flattens_buckets_and_emits_native_tags():

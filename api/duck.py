@@ -1,7 +1,5 @@
-"""DuckDB-on-top query layer: answers hashtag stats from the published hashtag_changeset artifact (history)
-plus the recent tail derived on the fly from the base Postgres tables, so the API matches the CLI. No
-materialized recent rollup; the split frontier is re-read on a TTL so a newly published month needs no restart.
-"""
+"""DuckDB query layer: history from the published hashtag_changeset artifact plus the recent tail from the
+base Postgres tables; the frontier is re-read on a TTL so a newly published month needs no restart."""
 
 import asyncio
 import collections
@@ -24,32 +22,29 @@ from litestar.exceptions import HTTPException, TooManyRequestsException
 from osmsg import query
 from osmsg.db.pg import attach_postgres
 from osmsg.db.schema import _apply_runtime_pragmas
-from osmsg.history import fetch_manifest
+from osmsg.history import DEFAULT_HISTORY_URL, fetch_manifest
 from osmsg.query import Sources
 
 _log = logging.getLogger("osmsg.api.duck")
 _PG_ATTACH = "pg"
 _BUSY_DETAIL = "Server is busy, please try again in a moment."
 
-# Warm connections (extensions + Postgres attached) reused across requests so cold-start is paid once;
-# the pool size caps concurrency, so heavy queries queue instead of thrashing the CPU.
+# Warm connections reused so cold-start is paid once; the pool size caps concurrency so heavy queries queue.
 _POOL_SIZE = int(os.getenv("OSMSG_DUCKDB_POOL", "3"))
 # Max wait for a free slot before shedding with 429 (see _acquire).
 _POOL_WAIT = float(os.getenv("OSMSG_POOL_WAIT_SECONDS", "8"))
-# Above the slowest legitimate query; a watchdog interrupts anything past it so a disconnected client or
-# runaway cannot pin a core.
+# Above the slowest legitimate query; the watchdog interrupts anything past it so a runaway cannot pin a core.
 _QUERY_TIMEOUT = float(os.getenv("OSMSG_QUERY_TIMEOUT_SECONDS", "150"))
 _pool: queue.Queue | None = None
 _pool_lock = threading.Lock()
 
-_QUERY_CACHE_DIR = os.getenv("OSMSG_QUERY_CACHE_DIR")  # memoize all-time mega aggregates here; unset -> off
-_HISTORY_URL = os.getenv("OSMSG_HISTORY_URL", "hf://datasets/kshitijrajsharma/osmsg-history")
+_QUERY_CACHE_DIR = os.getenv("OSMSG_QUERY_CACHE_DIR")  # memoize all-time mega aggregates here; unset disables it
+_HISTORY_URL = os.getenv("OSMSG_HISTORY_URL", DEFAULT_HISTORY_URL)
 _ROLLUP = os.getenv("OSMSG_ROLLUP_BASE", f"{_HISTORY_URL}/rollup")
 _HASHTAG_CHANGESET = os.getenv("OSMSG_HASHTAG_CHANGESET", f"{_ROLLUP}/hashtag_changeset/data.parquet")
 _USERS = os.getenv("OSMSG_USERS", f"{_ROLLUP}/users/data.parquet")
 _FRONTIER_TTL_SECONDS = int(os.getenv("OSMSG_FRONTIER_TTL_SECONDS", "3600"))
-# work_mem for the API's own pooled Postgres connections only (not the worker, not the db global config), so
-# the heaviest global aggregate stays mostly in memory instead of spilling. Sized to the pool + db cap.
+# work_mem for the API's pooled Postgres connections only, sized so the heaviest global aggregate stays in memory.
 _PG_WORK_MEM = os.getenv("OSMSG_PG_WORK_MEM", "64MB")
 
 _frontier_cache: tuple[float, dt.datetime] | None = None
@@ -142,72 +137,68 @@ def _pool_ready() -> queue.Queue:
 
 
 def _acquire(pool: queue.Queue) -> duckdb.DuckDBPyConnection:
-    """Borrow a warm connection, waiting at most _POOL_WAIT for a free slot. Past that the box is saturated,
-    so shed the request with 429 instead of queueing to the watchdog timeout or stacking toward an OOM."""
+    """Borrow a warm connection, waiting at most _POOL_WAIT; past that the box is saturated, so shed with 429
+    before requests stack toward the watchdog timeout or an OOM."""
     try:
         return pool.get(timeout=_POOL_WAIT)
     except queue.Empty:
         raise TooManyRequestsException(detail="Server at capacity; retry shortly.") from None
 
 
-# A timed-out all-time query caches nothing, so its retry is just as slow; on timeout we re-run it in the
-# background to fill the cache the retry reads. One at a time on its own connection so it can't starve the pool.
+# A timed-out all-time query caches nothing, so it is re-run in the background to fill the cache its retry
+# reads; one at a time on its own connection so it cannot starve the pool.
 _warm_pool = ThreadPoolExecutor(max_workers=1)
 _warm_inflight: set[tuple[str, str, bool]] = set()
 _warm_lock = threading.Lock()
 
 
-def _warm(fn, hashtag, kwargs, key) -> None:
+def _warm_with(key, label: str, call) -> None:
     try:
         with contextlib.closing(_connect()) as con:
-            fn(con, hashtag, _sources(), **kwargs)
+            call(con)
     except (duckdb.Error, RuntimeError) as e:
-        _log.warning("cache warm rerun of %s for %r failed: %s", fn.__name__, hashtag, e)
+        _log.warning("cache warm of %s failed: %s", label, e)
     finally:
         with _warm_lock:
             _warm_inflight.discard(key)
+
+
+def _submit_warm(key, job, *args) -> None:
+    """Run job(*args, key) once per key in the background; the job releases the key when it ends."""
+    with _warm_lock:
+        if key in _warm_inflight:
+            return
+        _warm_inflight.add(key)
+    _warm_pool.submit(job, *args, key)
+
+
+def _warm(fn, hashtag, kwargs, key) -> None:
+    _warm_with(key, f"{fn.__name__} for {hashtag!r}", lambda con: fn(con, hashtag, _sources(), **kwargs))
+
+
+def _warm_all_time_job(hashtag, exact, key) -> None:
+    _warm_with(key, f"all-time {hashtag!r}", lambda con: query.warm_all_time(con, hashtag, _sources(), exact=exact))
 
 
 def _enqueue_warm(fn, hashtag, kwargs) -> None:
     """Re-run an all-time query off the request path to fill its cache, deduped per key, best-effort.
     No-op when caching is off."""
-    if _QUERY_CACHE_DIR is None:
-        return
-    key = (fn.__name__, repr(hashtag), bool(kwargs.get("exact", False)))
-    with _warm_lock:
-        if key in _warm_inflight:
-            return
-        _warm_inflight.add(key)
-    _warm_pool.submit(_warm, fn, hashtag, kwargs, key)
-
-
-def _warm_all_time_job(hashtag, key, exact) -> None:
-    try:
-        with contextlib.closing(_connect()) as con:
-            query.warm_all_time(con, hashtag, _sources(), exact=exact)
-    except (duckdb.Error, RuntimeError) as e:
-        _log.warning("all-time warm for %r failed: %s", hashtag, e)
-    finally:
-        with _warm_lock:
-            _warm_inflight.discard(key)
+    if _QUERY_CACHE_DIR is not None:
+        _submit_warm((fn.__name__, repr(hashtag), bool(kwargs.get("exact", False))), _warm, fn, hashtag, kwargs)
 
 
 def _maybe_warm_all_time(hashtag, exact) -> None:
-    """Fire a background warm of the all-time history caches (leaderboard per-user tags, trending
-    co-occurring) for this hashtag when any is still cold, deduped per hashtag. No-op when caching is off."""
+    """Background-warm this hashtag's all-time history caches when any is still cold. No-op when caching
+    is off."""
     if _QUERY_CACHE_DIR is None or not query.all_time_warm_pending(_sources(), hashtag, exact=exact):
         return
     key = ("warm_all_time", repr(hashtag), bool(exact))
-    with _warm_lock:
-        if key in _warm_inflight:
-            return
-        _warm_inflight.add(key)
-    _warm_pool.submit(_warm_all_time_job, hashtag, key, exact)
+    _submit_warm(key, _warm_all_time_job, hashtag, exact)
 
 
-def _run(fn, hashtag, **kwargs):
-    """Borrow a warm pooled connection (429 past _POOL_WAIT caps concurrency), run under a watchdog that
-    interrupts a query past _QUERY_TIMEOUT, and return it (replaced if it errored or was interrupted)."""
+def _run_pooled(call, name: str, on_interrupt=None):
+    """Run call(con) on a pooled connection (429 past _POOL_WAIT) under a watchdog that interrupts it past
+    _QUERY_TIMEOUT; a dirty or interrupted connection is replaced, never reused."""
     pool = _pool_ready()
     con = _acquire(pool)
     done = threading.Event()
@@ -215,8 +206,7 @@ def _run(fn, hashtag, **kwargs):
 
     def _watchdog() -> None:
         nonlocal interrupted
-        # Re-check done before interrupting: a query that finished at the timeout boundary must not be
-        # interrupted, or its now-idle connection carries a pending interrupt to the next borrower.
+        # Re-check done so a query that finished at the boundary never leaves an interrupt on the idle connection.
         if not done.wait(_QUERY_TIMEOUT) and not done.is_set():
             interrupted = True
             with contextlib.suppress(duckdb.Error):
@@ -226,30 +216,38 @@ def _run(fn, hashtag, **kwargs):
     watcher.start()
     healthy = True
     try:
-        return fn(con, hashtag, _sources(), **kwargs)
+        return call(con)
     except duckdb.Error as e:
-        healthy = False  # interrupted or DB error -> the connection may be dirty, recycle it
+        healthy = False
         if interrupted:
-            # Only all-time queries hit the shared cache, so only they are worth warming.
-            if kwargs.get("start") is None and kwargs.get("end") is None:
-                _enqueue_warm(fn, hashtag, kwargs)
+            if on_interrupt is not None:
+                on_interrupt()
             raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
         if isinstance(e, duckdb.OutOfMemoryException):
-            _log.warning("out of memory in %s under load, shedding as 503: %s", fn.__name__, e)
+            _log.warning("out of memory in %s under load, shedding as 503: %s", name, e)
             raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
-        _log.exception("duckdb error in %s", fn.__name__)
+        _log.exception("duckdb error in %s", name)
         raise
     finally:
         done.set()
-        watcher.join()  # ensure no interrupt is still pending before the connection is reused
-        # Recycle any connection whose watchdog fired, even if the query returned in the race window, so a
-        # late interrupt never reaches the next borrower.
+        watcher.join()
+        # Recycle any connection the watchdog fired on, even if the query returned in the race window.
         if healthy and not interrupted:
             pool.put(con)
         else:
             with contextlib.suppress(duckdb.Error):
                 con.close()
             pool.put(_connect())
+
+
+def _run(fn, hashtag, **kwargs):
+    # Only all-time queries hit the shared cache, so only they are worth warming after a timeout.
+    all_time = kwargs.get("start") is None and kwargs.get("end") is None
+    return _run_pooled(
+        lambda con: fn(con, hashtag, _sources(), **kwargs),
+        fn.__name__,
+        on_interrupt=(lambda: _enqueue_warm(fn, hashtag, kwargs)) if all_time else None,
+    )
 
 
 async def summary(
@@ -366,60 +364,17 @@ async def map_points(
 
 
 def _run_global(fn, **kwargs):
-    """Like _run but for the no-hashtag global endpoints: runs fn(con, _sources(), **kwargs) under the
-    watchdog on a pooled connection. No warm path (global windows are recent, uncached)."""
-    pool = _pool_ready()
-    con = _acquire(pool)
-    done = threading.Event()
-    interrupted = False
-
-    def _watchdog() -> None:
-        nonlocal interrupted
-        # Re-check done before interrupting so a query that finished at the timeout boundary is not
-        # interrupted on its now-idle connection.
-        if not done.wait(_QUERY_TIMEOUT) and not done.is_set():
-            interrupted = True
-            with contextlib.suppress(duckdb.Error):
-                con.interrupt()
-
-    watcher = threading.Thread(target=_watchdog, daemon=True)
-    watcher.start()
-    healthy = True
-    try:
-        return fn(con, _sources(), **kwargs)
-    except duckdb.Error as e:
-        healthy = False
-        if interrupted:
-            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
-        if isinstance(e, duckdb.OutOfMemoryException):
-            _log.warning("out of memory in %s under load, shedding as 503: %s", fn.__name__, e)
-            raise HTTPException(status_code=503, detail=_BUSY_DETAIL) from None
-        _log.exception("duckdb error in %s", fn.__name__)
-        raise
-    finally:
-        done.set()
-        watcher.join()
-        # Recycle any connection whose watchdog fired, even if the query returned in the race window.
-        if healthy and not interrupted:
-            pool.put(con)
-        else:
-            with contextlib.suppress(duckdb.Error):
-                con.close()
-            pool.put(_connect())
+    return _run_pooled(lambda con: fn(con, _sources(), **kwargs), fn.__name__)
 
 
-# Memoize whole-OSM results by a grain-rounded window so repeat hits are instant.
+# Memoize whole-OSM results by a minute-rounded window so repeat hits are instant.
 _GLOBAL_CACHE_TTL = float(os.getenv("OSMSG_GLOBAL_CACHE_TTL", "120"))
-_GLOBAL_GRAIN = 60
 _global_cache: collections.OrderedDict[tuple, tuple[float, object]] = collections.OrderedDict()
 _global_cache_lock = threading.Lock()
 
 
 def _round_window(start: dt.datetime, end: dt.datetime) -> tuple[dt.datetime, dt.datetime]:
-    def floor(t: dt.datetime) -> dt.datetime:
-        return t.replace(second=(t.second // _GLOBAL_GRAIN) * _GLOBAL_GRAIN, microsecond=0)
-
-    return floor(start), floor(end)
+    return start.replace(second=0, microsecond=0), end.replace(second=0, microsecond=0)
 
 
 async def _global_cached(fn, key_extra, start, end, **kwargs):

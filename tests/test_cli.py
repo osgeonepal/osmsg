@@ -111,13 +111,10 @@ def test_password_stdin_with_empty_input_rejected():
     assert result.exit_code == 2
 
 
-def test_hashtags_help_string_is_present():
-    """Regression: --hashtags used to ship without a help string."""
-    result = runner.invoke(app, ["--help"])
+def test_hashtags_option_shows_its_help_text():
+    result = runner.invoke(app, ["--help"], env={"COLUMNS": "250"})
     plain = click.unstyle(result.stdout)
-    assert "--hashtags" in plain
-    # The help text mentions either substring or exact-lookup behaviour.
-    assert "hashtag" in plain.lower()
+    assert "Hashtag filter (substring by default; whole-word with --exact-lookup)." in plain
 
 
 @pytest.fixture

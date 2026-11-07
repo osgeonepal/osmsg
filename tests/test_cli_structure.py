@@ -1,5 +1,5 @@
-"""CLI structure: the root still runs without a subcommand after the callback conversion, the maintain
-subcommands are registered, and --insert / --psql-dsn build the expected RunConfig."""
+"""CLI structure: the root runs without a subcommand, the maintain subcommands are registered, and
+--insert / --psql-dsn build the expected RunConfig."""
 
 import click
 import pytest

@@ -11,7 +11,6 @@ from osmsg.exceptions import OsmsgError
 from osmsg.pipeline import (
     RunConfig,
     _auto_switch_replication,
-    _bootstrap_window_start,
     _canonical_hashtags,
     _needs_changefile_changeset_filter,
     _normalize_urls,
@@ -42,7 +41,7 @@ def test_normalize_urls_dedupes():
 
 
 def test_normalize_urls_preserves_order():
-    """Order matters: cfg.urls[0] used to be the implicit resume key. Set comprehension was non-deterministic."""
+    """Dedup keeps first-seen order because cfg.urls[0] is the resume source."""
     cfg = RunConfig(urls=["https://example.com/zebra", "https://example.com/alpha", "https://example.com/zebra"])
     _normalize_urls(cfg)
     assert cfg.urls == ["https://example.com/zebra", "https://example.com/alpha"]
@@ -244,15 +243,6 @@ def test_bootstrap_ignores_changeset_replication_state_row(tmp_path):
     ts, resume_seq = starts[PLANET_MINUTE]
     assert resume_seq is None
     assert dt.datetime.now(dt.UTC) - ts < dt.timedelta(hours=2)
-
-
-def test_bootstrap_window_start_default_is_one_hour():
-    now = dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.UTC)
-    assert _bootstrap_window_start(now) == now - dt.timedelta(hours=1)
-
-
-def test_runconfig_default_changeset_pad_is_one_hour():
-    assert RunConfig().changeset_pad_hours == 1
 
 
 def test_runconfig_changeset_pad_hours_round_trips_to_replication():
